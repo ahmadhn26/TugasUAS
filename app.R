@@ -3950,7 +3950,10 @@ server <- function(input, output, session) {
         result <- moran_calculation()
         jpeg(file, width = 800, height = 600, quality = 95)
         if (!is.null(result$estimate)) {
-          barplot(result$res, main = "Moran's I Plot", col = "skyblue")
+          # Mirip download_correlation_plot: plot sesuatu yang informatif
+          barplot(rep(result$estimate[1], 1), names.arg = paste0("Moran's I: ", round(result$estimate[1], 4)),
+                  col = "skyblue", main = "Nilai Moran's I", ylim = c(min(0, result$estimate[1]), max(1, result$estimate[1])))
+          abline(h = 0, lty = 2)
         } else {
           plot.new(); text(0.5, 0.5, "Tidak ada plot.")
         }
@@ -3960,7 +3963,6 @@ server <- function(input, output, session) {
     output$download_moran_interpretation <- downloadHandler(
       filename = function() paste0("interpretasi_moran_", input$map_var, "_", Sys.Date(), ".docx"),
       content = function(file) {
-        result <- moran_calculation()
         doc <- officer::read_docx()
         doc <- doc %>%
           officer::body_add_par("INTERPRETASI MORAN'S I", style = "heading 1") %>%
@@ -3973,7 +3975,16 @@ server <- function(input, output, session) {
       filename = function() paste0("plot_normalitas_", input$assumption_var, "_", Sys.Date(), ".jpg"),
       content = function(file) {
         jpeg(file, width = 800, height = 600, quality = 95)
-        print(output$normality_plot())
+        # Mirip download_correlation_plot: panggil ulang plot
+        var_data <- sovi_data[[input$assumption_var]]
+        var_data <- var_data[!is.na(var_data)]
+        par(mfrow = c(1, 2))
+        hist(var_data, main = paste("Histogram", input$assumption_var), 
+             xlab = input$assumption_var, col = "lightblue", border = "white")
+        curve(dnorm(x, mean = mean(var_data), sd = sd(var_data)), add = TRUE, col = "red", lwd = 2)
+        qqnorm(var_data, main = paste("Q-Q Plot", input$assumption_var))
+        qqline(var_data, col = "red", lwd = 2)
+        par(mfrow = c(1, 1))
         dev.off()
       }
     )
@@ -3991,7 +4002,26 @@ server <- function(input, output, session) {
       filename = function() paste0("plot_homogenitas_", input$assumption_var, "_", Sys.Date(), ".jpg"),
       content = function(file) {
         jpeg(file, width = 800, height = 600, quality = 95)
-        print(output$homogeneity_plot())
+        var_data <- sovi_data[[input$assumption_var]]
+        group_data <- categorical_vars$data[[input$group_var]]
+        complete_cases <- !is.na(var_data) & !is.na(group_data)
+        plot_data <- data.frame(
+          Variable = var_data[complete_cases],
+          Group = group_data[complete_cases]
+        )
+        par(mfrow = c(1, 2))
+        boxplot(Variable ~ Group, data = plot_data, 
+                main = paste("Boxplot", input$assumption_var, "by", input$group_var),
+                xlab = input$group_var, ylab = input$assumption_var,
+                col = rainbow(length(unique(plot_data$Group))))
+        group_means <- tapply(plot_data$Variable, plot_data$Group, mean, na.rm = TRUE)
+        group_vars <- tapply(plot_data$Variable, plot_data$Group, var, na.rm = TRUE)
+        plot(group_means, group_vars, 
+             main = "Mean vs Variance by Group",
+             xlab = "Group Means", ylab = "Group Variances",
+             pch = 19, col = "blue")
+        text(group_means, group_vars, names(group_means), pos = 3, cex = 0.8)
+        par(mfrow = c(1, 1))
         dev.off()
       }
     )
