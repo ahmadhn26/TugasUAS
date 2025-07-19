@@ -661,6 +661,11 @@ ui <- dashboardPage(
                   div(class = "interpretation-box",
                       h4("📊 Interpretasi Hasil Uji Moran's I"),
                       textOutput("moran_interpretation")
+                  ),
+                  div(class = "download-section",
+                      downloadButton("download_moran_result", "📥 Download Hasil Moran's I (Word)", class = "btn-primary", icon = icon("file-word")),
+                      downloadButton("download_moran_plot", "🖼️ Plot Moran's I (JPG)", class = "btn-warning", icon = icon("image")),
+                      downloadButton("download_moran_interpretation", "📥 Download Interpretasi Moran's I (Word)", class = "btn-success", icon = icon("file-word"))
                   )
                 )
               )
@@ -690,6 +695,14 @@ ui <- dashboardPage(
                     h5("📥 Download", style = "margin-top: 0;"),
                     downloadButton("download_assumptions", "📄 Laporan Uji Asumsi (Word)", 
                                    class = "btn-primary", icon = icon("download"))
+                  ),
+                  div(class = "download-section",
+                      downloadButton("download_normality_plot", "🖼️ Plot Normalitas (JPG)", class = "btn-warning", icon = icon("image")),
+                      downloadButton("download_normality_interpretation", "📥 Interpretasi Normalitas (Word)", class = "btn-success", icon = icon("file-word"))
+                  ),
+                  div(class = "download-section",
+                      downloadButton("download_homogeneity_plot", "🖼️ Plot Homogenitas (JPG)", class = "btn-warning", icon = icon("image")),
+                      downloadButton("download_homogeneity_interpretation", "📥 Interpretasi Homogenitas (Word)", class = "btn-success", icon = icon("file-word"))
                   )
                 ),
                 
@@ -770,6 +783,10 @@ ui <- dashboardPage(
                     h5("📥 Download", style = "margin-top: 0;"),
                     downloadButton("download_t_test", "📄 Hasil Uji T (Word)", 
                                    class = "btn-primary", icon = icon("download"))
+                  ),
+                  div(class = "download-section",
+                      downloadButton("download_ttest_plot", "🖼️ Plot T-Test (JPG)", class = "btn-warning", icon = icon("image")),
+                      downloadButton("download_ttest_interpretation", "📥 Interpretasi T-Test (Word)", class = "btn-success", icon = icon("file-word"))
                   )
                 ),
                 
@@ -838,6 +855,10 @@ ui <- dashboardPage(
                     h5("📥 Download", style = "margin-top: 0;"),
                     downloadButton("download_prop_var", "📄 Hasil Uji (Word)", 
                                    class = "btn-primary", icon = icon("download"))
+                  ),
+                  div(class = "download-section",
+                      downloadButton("download_propvar_plot", "🖼️ Plot Ragam (JPG)", class = "btn-warning", icon = icon("image")),
+                      downloadButton("download_propvar_interpretation", "📥 Interpretasi Ragam (Word)", class = "btn-success", icon = icon("file-word"))
                   )
                 ),
                 
@@ -896,6 +917,10 @@ ui <- dashboardPage(
                     h5("📥 Download", style = "margin-top: 0;"),
                     downloadButton("download_anova", "📄 Hasil ANOVA (Word)", 
                                    class = "btn-primary", icon = icon("download"))
+                  ),
+                  div(class = "download-section",
+                      downloadButton("download_anova_plot", "🖼️ Plot ANOVA (JPG)", class = "btn-warning", icon = icon("image")),
+                      downloadButton("download_anova_interpretation", "📥 Interpretasi ANOVA (Word)", class = "btn-success", icon = icon("file-word"))
                   )
                 ),
                 
@@ -993,6 +1018,16 @@ ui <- dashboardPage(
                     h5("📥 Download", style = "margin-top: 0;"),
                     downloadButton("download_regression", "📄 Laporan Regresi (Word)", 
                                    class = "btn-primary", icon = icon("download"))
+                  ),
+                  div(class = "download-section",
+                      downloadButton("download_regression_scatter", "🖼️ Plot Regresi (JPG)", class = "btn-warning", icon = icon("image")),
+                      downloadButton("download_regression_scatter_interpretation", "📥 Interpretasi Plot Regresi (Word)", class = "btn-success", icon = icon("file-word"))
+                  ),
+                  div(class = "download-section",
+                      downloadButton("download_regression_diag", "🖼️ Plot Diagnostik (JPG)", class = "btn-warning", icon = icon("image"))
+                  ),
+                  div(class = "download-section",
+                      downloadButton("download_regression_interpretation", "📥 Interpretasi Model Regresi (Word)", class = "btn-success", icon = icon("file-word"))
                   )
                 ),
                 
@@ -3892,6 +3927,165 @@ server <- function(input, output, session) {
       doc <- officer::read_docx() %>%
         officer::body_add_par("STATISTIK PETA SOVI", style = "heading 1") %>%
         officer::body_add_par(interpretation, style = "Normal")
+      print(doc, target = file)
+    }
+  )
+
+  # 1. Moran's I
+  downloadHandler(
+    filename = function() paste0("hasil_moran_", input$map_var, "_", Sys.Date(), ".docx"),
+    content = function(file) {
+      result <- moran_calculation()
+      doc <- officer::read_docx() %>%
+        officer::body_add_par("HASIL UJI MORAN'S I", style = "heading 1") %>%
+        officer::body_add_par(capture.output(print(result)), style = "Normal")
+      print(doc, target = file)
+    }
+  )
+  # Plot Moran's I
+  downloadHandler(
+    filename = function() paste0("plot_moran_", input$map_var, "_", Sys.Date(), ".jpg"),
+    content = function(file) {
+      result <- moran_calculation()
+      jpeg(file, width = 800, height = 600, quality = 95)
+      if (!is.null(result$estimate)) {
+        barplot(result$res, main = "Moran's I Plot", col = "skyblue")
+      } else {
+        plot.new(); text(0.5, 0.5, "Tidak ada plot.")
+      }
+      dev.off()
+    }
+  )
+  # Interpretasi Moran's I
+  downloadHandler(
+    filename = function() paste0("interpretasi_moran_", input$map_var, "_", Sys.Date(), ".docx"),
+    content = function(file) {
+      result <- moran_calculation()
+      doc <- officer::read_docx() %>%
+        officer::body_add_par("INTERPRETASI MORAN'S I", style = "heading 1") %>%
+        officer::body_add_par(output$moran_interpretation(), style = "Normal")
+      print(doc, target = file)
+    }
+  )
+  # 2. Uji Asumsi (Normalitas, Homogenitas)
+  downloadHandler(
+    filename = function() paste0("plot_normalitas_", input$assumption_var, "_", Sys.Date(), ".jpg"),
+    content = function(file) {
+      jpeg(file, width = 800, height = 600, quality = 95)
+      print(output$normality_plot())
+      dev.off()
+    }
+  )
+  downloadHandler(
+    filename = function() paste0("interpretasi_normalitas_", input$assumption_var, "_", Sys.Date(), ".docx"),
+    content = function(file) {
+      doc <- officer::read_docx() %>%
+        officer::body_add_par("INTERPRETASI UJI NORMALITAS", style = "heading 1") %>%
+        officer::body_add_par(output$normality_interpretation(), style = "Normal")
+      print(doc, target = file)
+    }
+  )
+  downloadHandler(
+    filename = function() paste0("plot_homogenitas_", input$assumption_var, "_", Sys.Date(), ".jpg"),
+    content = function(file) {
+      jpeg(file, width = 800, height = 600, quality = 95)
+      print(output$homogeneity_plot())
+      dev.off()
+    }
+  )
+  downloadHandler(
+    filename = function() paste0("interpretasi_homogenitas_", input$assumption_var, "_", Sys.Date(), ".docx"),
+    content = function(file) {
+      doc <- officer::read_docx() %>%
+        officer::body_add_par("INTERPRETASI UJI HOMOGENITAS", style = "heading 1") %>%
+        officer::body_add_par(output$homogeneity_interpretation(), style = "Normal")
+      print(doc, target = file)
+    }
+  )
+  # 3. Inferensia (T-Test, ANOVA, Proporsi/Varian)
+  downloadHandler(
+    filename = function() paste0("plot_ttest_", input$t_test_var, "_", Sys.Date(), ".jpg"),
+    content = function(file) {
+      jpeg(file, width = 800, height = 600, quality = 95)
+      print(output$t_test_plot())
+      dev.off()
+    }
+  )
+  downloadHandler(
+    filename = function() paste0("interpretasi_ttest_", input$t_test_var, "_", Sys.Date(), ".docx"),
+    content = function(file) {
+      doc <- officer::read_docx() %>%
+        officer::body_add_par("INTERPRETASI UJI T-TEST", style = "heading 1") %>%
+        officer::body_add_par(output$t_test_interpretation(), style = "Normal")
+      print(doc, target = file)
+    }
+  )
+  downloadHandler(
+    filename = function() paste0("plot_propvar_", input$var_test_var, "_", Sys.Date(), ".jpg"),
+    content = function(file) {
+      jpeg(file, width = 800, height = 600, quality = 95)
+      print(output$prop_var_plot())
+      dev.off()
+    }
+  )
+  downloadHandler(
+    filename = function() paste0("interpretasi_propvar_", input$var_test_var, "_", Sys.Date(), ".docx"),
+    content = function(file) {
+      doc <- officer::read_docx() %>%
+        officer::body_add_par("INTERPRETASI UJI RAGAM", style = "heading 1") %>%
+        officer::body_add_par(output$prop_var_interpretation(), style = "Normal")
+      print(doc, target = file)
+    }
+  )
+  downloadHandler(
+    filename = function() paste0("plot_anova_", input$anova_y, "_", Sys.Date(), ".jpg"),
+    content = function(file) {
+      jpeg(file, width = 800, height = 600, quality = 95)
+      print(output$anova_plot())
+      dev.off()
+    }
+  )
+  downloadHandler(
+    filename = function() paste0("interpretasi_anova_", input$anova_y, "_", Sys.Date(), ".docx"),
+    content = function(file) {
+      doc <- officer::read_docx() %>%
+        officer::body_add_par("INTERPRETASI ANOVA", style = "heading 1") %>%
+        officer::body_add_par(output$anova_interpretation(), style = "Normal")
+      print(doc, target = file)
+    }
+  )
+  # 4. Regresi
+  downloadHandler(
+    filename = function() paste0("plot_regresi_", input$reg_y, "_", Sys.Date(), ".jpg"),
+    content = function(file) {
+      jpeg(file, width = 800, height = 600, quality = 95)
+      print(output$regression_scatter_plot())
+      dev.off()
+    }
+  )
+  downloadHandler(
+    filename = function() paste0("interpretasi_plot_regresi_", input$reg_y, "_", Sys.Date(), ".docx"),
+    content = function(file) {
+      doc <- officer::read_docx() %>%
+        officer::body_add_par("INTERPRETASI PLOT REGRESI", style = "heading 1") %>%
+        officer::body_add_par(output$regression_plot_interpretation(), style = "Normal")
+      print(doc, target = file)
+    }
+  )
+  downloadHandler(
+    filename = function() paste0("plot_diag_regresi_", input$reg_y, "_", Sys.Date(), ".jpg"),
+    content = function(file) {
+      jpeg(file, width = 800, height = 600, quality = 95)
+      print(output$regression_plots())
+      dev.off()
+    }
+  )
+  downloadHandler(
+    filename = function() paste0("interpretasi_regresi_", input$reg_y, "_", Sys.Date(), ".docx"),
+    content = function(file) {
+      doc <- officer::read_docx() %>%
+        officer::body_add_par("INTERPRETASI MODEL REGRESI", style = "heading 1") %>%
+        officer::body_add_par(output$regression_interpretation(), style = "Normal")
       print(doc, target = file)
     }
   )
