@@ -27,13 +27,6 @@ library(sf)
 library(leaflet)
 library(mapview)
 library(RColorBrewer)
-library(mapview)
-library(spdep)
-
-
-
-
-
 
 # ===============================================================================
 # 2. PEMUATAN DAN PERSIAPAN DATA - DIPERBAIKI
@@ -45,8 +38,6 @@ load_data <- function() {
     # Coba muat data dari file lokal
     sovi_data <- read.csv("data/sovi_data.csv", stringsAsFactors = FALSE)
     distance_data <- read.csv("data/distance.csv", stringsAsFactors = FALSE)
-    
-    
     
     list(
       sovi = sovi_data,
@@ -106,80 +97,89 @@ load_data <- function() {
   })
 }
 
-# Fungsi ini sekarang hanya bertugas memuat file, tidak lebih.
-# HANYA MEMBACA FILE, TIDAK LEBIH
+# Fungsi untuk memuat data spasial GPKG
 load_spatial_data <- function() {
   tryCatch({
+    # Coba muat data spasial dari file GPKG
     spatial_data <- st_read("data/peta_sovi_sederhana.gpkg", quiet = TRUE)
-    list(spatial = spatial_data, status = "success", message = "Data spasial berhasil dimuat")
+    
+    # Pastikan data memiliki kolom yang diperlukan
+    required_cols <- c("wadmkk", "wadmpr", "kode_bersih")
+    if (!all(required_cols %in% names(spatial_data))) {
+      stop("Data spasial tidak memiliki kolom yang diperlukan")
+    }
+    
+    # Rename kolom untuk konsistensi
+    spatial_data <- spatial_data %>%
+      rename(
+        DISTRICTCODE = kode_bersih,
+        DISTRICT_NAME = wadmkk,
+        PROVINCE_NAME = wadmpr
+      )
+    
+    list(
+      spatial = spatial_data,
+      status = "success",
+      message = "Data spasial berhasil dimuat dari file GPKG"
+    )
   }, error = function(e) {
-    list(spatial = NULL, status = "error", message = paste("Gagal memuat data spasial:", e$message))
+    # Jika gagal, buat data spasial dummy
+    set.seed(123)
+    n <- 30  # Jumlah wilayah dummy
+    
+    # Buat data spasial dummy
+    dummy_spatial <- data.frame(
+      DISTRICTCODE = 1101:(1100 + n),
+      DISTRICT_NAME = paste("Kabupaten", 1:n),
+      PROVINCE_NAME = rep(c("Aceh", "Sumatera Utara", "Sumatera Barat"), length.out = n),
+      children = round(runif(n, 5, 20), 2),
+      female = round(runif(n, 45, 55), 2),
+      elderly = round(runif(n, 1, 8), 2),
+      fhead = round(runif(n, 10, 30), 2),
+      familysize = round(runif(n, 3, 6), 2),
+      noelectric = round(runif(n, 0, 5), 2),
+      lowedu = round(runif(n, 15, 40), 2),
+      growth = round(runif(n, 0.5, 3), 2),
+      poverty = round(runif(n, 5, 35), 2),
+      illiterate = round(runif(n, 2, 15), 2),
+      notraining = round(runif(n, 85, 99), 2),
+      dprone = round(runif(n, 30, 95), 2),
+      rented = round(runif(n, 2, 10), 2),
+      nosewer = round(runif(n, 10, 50), 2),
+      tapwater = round(runif(n, 3, 25), 2)
+    )
+    
+    # Buat geometry dummy (polygon sederhana)
+    coords <- lapply(1:n, function(i) {
+      # Buat polygon sederhana untuk setiap wilayah
+      x <- runif(4, i*10, (i+1)*10)
+      y <- runif(4, 0, 10)
+      matrix(c(x, y), ncol = 2)
+    })
+    
+    polygons <- lapply(coords, function(coord) {
+      st_polygon(list(coord))
+    })
+    
+    dummy_spatial$geometry <- st_sfc(polygons, crs = 4326)
+    dummy_spatial <- st_sf(dummy_spatial)
+    
+    list(
+      spatial = dummy_spatial,
+      status = "dummy",
+      message = "File data spasial tidak ditemukan. Menggunakan data spasial dummy untuk demonstrasi."
+    )
   })
 }
 
-# ===============================================================================
-# PEMUATAN DAN PENGGABUNGAN DATA - VERSI PERBAIKAN FINAL
-# ===============================================================================
-
-# 1. Muat data non-spasial (dari sovi_data.csv)
+# Muat data
 data_result <- load_data()
 sovi_data <- data_result$sovi
 distance_data <- data_result$distance
 
-# 2. Buat atau muat Matriks Bobot Spasial
-weights_rds_path <- "data/spatial_weights_from_distance.rds"
-if (file.exists(weights_rds_path)) {
-  spatial_weights <- readRDS(weights_rds_path)
-  print("Matriks bobot spasial berhasil dimuat dari file .rds.")
-} else {
-  print("File .rds tidak ditemukan. Membuat matriks bobot spasial dari distance.csv...")
-  if (exists("distance_data") && is.data.frame(distance_data)) {
-    dist_matrix_full <- as.matrix(distance_data[, -1])
-    inv_dist_matrix <- 1 / (dist_matrix_full + 1e-9)
-    diag(inv_dist_matrix) <- 0
-    spatial_weights <- mat2listw(inv_dist_matrix, style = "W")
-    saveRDS(spatial_weights, file = weights_rds_path)
-    print(paste("Matriks bobot spasial telah dibuat dan disimpan di:", weights_rds_path))
-  } else {
-    stop("Data 'distance.csv' tidak dapat dimuat atau tidak valid untuk membuat matriks bobot.")
-  }
-}
-# Simpan matriks jarak mentah untuk nanti
-dist_matrix_raw <- as.matrix(distance_data[, -1])
-
-# 3. Muat data spasial MENTAH
+# Muat data spasial
 spatial_result <- load_spatial_data()
-spatial_data_raw <- spatial_result$spatial
-
-# 4. Lakukan RENAME dengan nama kolom yang sudah kita pastikan dari konsol
-spatial_data_renamed <- spatial_data_raw %>%
-  rename(
-    DISTRICTCODE = KODE_BERSIH,
-    DISTRICT_NAME = WADMKK,
-    PROVINCE_NAME = WADMPR
-  )
-
-# --- LANGKAH PENGGABUNGAN ---
-
-# 5. Ambil kolom kunci dan geometri yang dibutuhkan
-spatial_data_geom_clean <- spatial_data_renamed %>%
-  select(DISTRICTCODE, DISTRICT_NAME, PROVINCE_NAME, geom)
-
-# 6. Pastikan tipe data kolom kunci sama
-sovi_data$DISTRICTCODE <- as.character(sovi_data$DISTRICTCODE)
-spatial_data_geom_clean$DISTRICTCODE <- as.character(spatial_data_geom_clean$DISTRICTCODE)
-
-# 7. Gabungkan geometri dengan atribut dari sovi_data
-spatial_data <- left_join(spatial_data_geom_clean, sovi_data, by = "DISTRICTCODE")
-
-# --- AKHIR DARI PENGGABUNGAN ---
-
-
-# Buat daftar pilihan peta dari data yang SUDAH digabung
-pilihan_peta_numerik <- names(spatial_data)[sapply(st_drop_geometry(spatial_data), is.numeric)]
-
-# HAPUS BARIS INI KARENA SUDAH DITANGANI DI ATAS
-# spatial_weights <- readRDS("data/spatial_weights_from_distance.rds")
+spatial_data <- spatial_result$spatial
 
 # Metadata variabel berdasarkan struktur asli
 metadata <- data.frame(
@@ -604,48 +604,160 @@ ui <- dashboardPage(
       ),
       
       # =====================================================================
-      # TAB PETA INTERAKTIF - FITUR EKSPLORASI DATA
+      # TAB ANALISIS SPASIAL - FITUR EKSPLORASI DATA (PETA + ANALISIS SPASIAL SEDERHANA)
       # =====================================================================
       tabItem(tabName = "spatial",
               fluidRow(
                 box(
-                  title = "🗺️ Kontrol Peta Interaktif",
-                  status = "primary", solidHeader = TRUE, width = 4, class = "custom-box",
+                  title = "🗺️ Kontrol Peta Interaktif", 
+                  status = "primary", 
+                  solidHeader = TRUE,
+                  width = 4,
+                  class = "custom-box",
                   selectInput("map_var", "Pilih Variabel untuk Pemetaan:",
-                              choices = pilihan_peta_numerik,
-                              selected = "POVERTY"
-                  ),
+                              choices = c("children", "female", "elderly", "fhead", "familysize",
+                                          "noelectric", "lowedu", "growth", "poverty", "illiterate",
+                                          "notraining", "dprone", "rented", "nosewer", "tapwater")),
                   selectInput("color_palette", "Palet Warna:",
-                              choices = c("Viridis" = "viridis", "Plasma" = "plasma", "Inferno" = "inferno", "Blues" = "Blues", "Reds" = "Reds"),
-                              selected = "viridis"
+                              choices = c("Viridis" = "viridis", "Plasma" = "plasma", 
+                                          "Inferno" = "inferno", "Blues" = "Blues", 
+                                          "Reds" = "Reds", "Greens" = "Greens")),
+                  selectInput("map_style", "Gaya Peta:",
+                              choices = c("OpenStreetMap" = "OpenStreetMap",
+                                          "CartoDB.Positron" = "CartoDB.Positron",
+                                          "CartoDB.DarkMatter" = "CartoDB.DarkMatter",
+                                          "Esri.WorldImagery" = "Esri.WorldImagery")),
+                  numericInput("opacity", "Transparansi (0-1):", 
+                               value = 0.7, min = 0.1, max = 1, step = 0.1),
+                  checkboxInput("show_labels", "Tampilkan Label", value = TRUE),
+                  br(),
+                  div(
+                    class = "download-section",
+                    h5("📥 Download", style = "margin-top: 0;"),
+                    downloadButton("download_map", "📄 Laporan Peta (Word)", 
+                                   class = "btn-primary", icon = icon("download")),
+                    downloadButton("download_map_data", "📊 Data Peta (CSV)", 
+                                   class = "btn-success", icon = icon("download"))
                   )
                 ),
+                
                 box(
-                  title = "🗺️ Peta Interaktif SOVI Indonesia",
-                  status = "info", solidHeader = TRUE, width = 8, class = "custom-box",
-                  leafletOutput("sovi_map", height = "600px")
+                  title = "🗺️ Peta Interaktif SOVI Indonesia", 
+                  status = "info", 
+                  solidHeader = TRUE,
+                  width = 8,
+                  class = "custom-box",
+                  leafletOutput("sovi_map", height = "600px"),
+                  div(class = "interpretation-box",
+                      h4("🗺️ Interpretasi Peta"),
+                      textOutput("map_interpretation")
+                  )
                 )
               ),
               
-              # Baris baru untuk Analisis
               fluidRow(
                 box(
-                  title = "🔬 Analisis Autokorelasi Spasial (Moran's I)",
-                  status = "success", solidHeader = TRUE, width = 12, class = "custom-box",
-                  
-                  # Tombol untuk menjalankan analisis
-                  actionButton("run_moran", "Jalankan Uji Moran's I pada Variabel Terpilih", icon = icon("calculator"), class = "btn-success"),
-                  
-                  hr(), # Garis pemisah
-                  
-                  # Tempat untuk menampilkan hasil
-                  verbatimTextOutput("moran_test_result"),
-                  
-                  # Tempat untuk interpretasi
+                  title = "📊 Statistik Deskriptif Data Peta", 
+                  status = "success", 
+                  solidHeader = TRUE,
+                  width = 6,
+                  class = "custom-box",
+                  verbatimTextOutput("map_stats"),
                   div(class = "interpretation-box",
-                      h4("📊 Interpretasi Hasil Uji Moran's I"),
-                      textOutput("moran_interpretation")
+                      h4("📈 Interpretasi Statistik Peta"),
+                      textOutput("map_stats_interpretation")
                   )
+                ),
+                
+                box(
+                  title = "📋 Tabel Data Wilayah", 
+                  status = "warning", 
+                  solidHeader = TRUE,
+                  width = 6,
+                  class = "custom-box",
+                  DT::dataTableOutput("map_data_table"),
+                  br(),
+                  downloadButton("download_spatial_full", "📋 Laporan Lengkap Peta (Word)", 
+                                 class = "btn-success", icon = icon("file-word"))
+                )
+              ),
+              
+              # =====================================================================
+              # ANALISIS SPASIAL SEDERHANA - SEPERTI APP8.R AWAL
+              # =====================================================================
+              fluidRow(
+                box(
+                  title = "🔍 Kontrol Analisis Spasial", 
+                  status = "primary", 
+                  solidHeader = TRUE,
+                  width = 4,
+                  class = "custom-box",
+                  selectInput("spatial_var", "Pilih Variabel untuk Analisis Spasial:",
+                              choices = names(select_if(sovi_data, is.numeric))),
+                  selectInput("spatial_method", "Metode Analisis:",
+                              choices = c("Clustering Analysis" = "clustering",
+                                          "Correlation Analysis" = "correlation",
+                                          "Descriptive Statistics" = "descriptive")),
+                  numericInput("spatial_alpha", "Tingkat Signifikansi (α):", 
+                               value = 0.05, min = 0.01, max = 0.1, step = 0.01),
+                  checkboxInput("spatial_plot", "Tampilkan Plot", value = TRUE),
+                  br(),
+                  div(
+                    class = "download-section",
+                    h5("📥 Download Analisis Spasial", style = "margin-top: 0;"),
+                    downloadButton("download_spatial_analysis", "📄 Laporan Analisis Spasial (Word)", 
+                                   class = "btn-primary", icon = icon("download")),
+                    downloadButton("download_spatial_data", "📊 Data Analisis Spasial (CSV)", 
+                                   class = "btn-success", icon = icon("download"))
+                  )
+                ),
+                
+                box(
+                  title = "📈 Hasil Analisis Spasial", 
+                  status = "info", 
+                  solidHeader = TRUE,
+                  width = 8,
+                  class = "custom-box",
+                  tabsetPanel(
+                    tabPanel("🔗 Clustering Analysis",
+                             verbatimTextOutput("clustering_result"),
+                             plotOutput("clustering_plot", height = "300px"),
+                             div(class = "interpretation-box",
+                                 h4("🔗 Interpretasi Clustering"),
+                                 textOutput("clustering_interpretation")
+                             )
+                    ),
+                    tabPanel("📊 Correlation Analysis",
+                             verbatimTextOutput("correlation_result"),
+                             plotOutput("correlation_plot", height = "300px"),
+                             div(class = "interpretation-box",
+                                 h4("📊 Interpretasi Korelasi"),
+                                 textOutput("correlation_interpretation")
+                             )
+                    ),
+                    tabPanel("📈 Descriptive Statistics",
+                             verbatimTextOutput("descriptive_result"),
+                             plotOutput("descriptive_plot", height = "300px"),
+                             div(class = "interpretation-box",
+                                 h4("📈 Interpretasi Statistik Deskriptif"),
+                                 textOutput("descriptive_interpretation")
+                             )
+                    )
+                  )
+                )
+              ),
+              
+              fluidRow(
+                box(
+                  title = "📋 Ringkasan Analisis Spasial", 
+                  status = "warning", 
+                  solidHeader = TRUE,
+                  width = 12,
+                  class = "custom-box",
+                  DT::dataTableOutput("spatial_summary_table"),
+                  br(),
+                  downloadButton("download_spatial_complete", "📋 Laporan Lengkap Analisis Spasial (Word)", 
+                                 class = "btn-success", icon = icon("file-word"))
                 )
               )
       ),
@@ -1837,7 +1949,7 @@ server <- function(input, output, session) {
     
     # Ambil data spasial dan variabel yang dipilih
     spatial_data_filtered <- spatial_data %>%
-      select(DISTRICTCODE, DISTRICT_NAME, PROVINCE_NAME, geom, !!sym(input$map_var)) %>%
+      select(DISTRICTCODE, DISTRICT_NAME, PROVINCE_NAME, geometry, !!sym(input$map_var)) %>%
       filter(!is.na(!!sym(input$map_var)))
     
     if(nrow(spatial_data_filtered) == 0) {
@@ -1847,77 +1959,75 @@ server <- function(input, output, session) {
     spatial_data_filtered
   })
   
-  # =====================================================================
-  # PETA INTERAKTIF - VERSI ANTI-ERROR
-  # =====================================================================
+  # Output peta interaktif
   output$sovi_map <- renderLeaflet({
+    req(input$map_var, map_data())
     
-    # 1. Pastikan variabel peta sudah dipilih
-    req(input$map_var)
+    map_data_filtered <- map_data()
     
-    # 2. Ambil data peta yang sudah digabung
-    map_data_to_render <- spatial_data
-    
-    # 3. Pengecekan data yang kuat
-    # Pastikan data tidak NULL dan punya baris
-    if (is.null(map_data_to_render) || nrow(map_data_to_render) == 0) {
-      # Tampilkan peta kosong jika tidak ada data sama sekali
-      return(leaflet() %>% addTiles() %>% setView(lng = 118, lat = -2, zoom = 5) %>%
-               addControl("Data spasial tidak tersedia.", position = "topright"))
-    }
-    
-    # 4. Filter data berdasarkan variabel yang dipilih dan hilangkan NA
-    # Ini penting agar palet warna dan popup tidak error
-    map_data_filtered <- map_data_to_render %>%
-      filter(!is.na(.data[[input$map_var]]))
-    
-    if (nrow(map_data_filtered) == 0) {
-      return(leaflet() %>% addTiles() %>% setView(lng = 118, lat = -2, zoom = 5) %>%
-               addControl(paste("Tidak ada data valid untuk variabel:", input$map_var), position = "topright"))
-    }
-    
-    # 5. Render peta
-    var_values <- map_data_filtered[[input$map_var]]
-    pal <- colorNumeric(palette = input$color_palette, domain = var_values, na.color = "transparent")
-    
-    popup_content <- paste0(
-      "<strong>", map_data_filtered$DISTRICT_NAME, "</strong><br>",
-      "Provinsi: ", map_data_filtered$PROVINCE_NAME, "<br>",
-      input$map_var, ": ", round(var_values, 2)
-    )
-    
-    leaflet(map_data_filtered) %>%
-      addProviderTiles(providers$CartoDB.Positron) %>% # Menggunakan basemap default yang pasti ada
-      addPolygons(
-        fillColor = ~pal(var_values),
-        weight = 1,
-        opacity = 1,
-        color = "white",
-        dashArray = "3",
-        fillOpacity = 0.7, # Menggunakan nilai opacity default
-        highlightOptions = highlightOptions(
-          weight = 2,
-          color = "#666",
-          dashArray = "",
-          fillOpacity = 0.9,
-          bringToFront = TRUE
-        ),
-        label = lapply(popup_content, htmltools::HTML),
-        labelOptions = labelOptions(
-          style = list("font-weight" = "normal", padding = "3px 8px"),
-          textsize = "15px",
-          direction = "auto"
-        )
-      ) %>%
-      addLegend(
-        pal = pal,
-        values = var_values,
-        opacity = 0.7,
-        title = input$map_var,
-        position = "bottomright"
+    if(is.null(map_data_filtered) || nrow(map_data_filtered) == 0) {
+      # Tampilkan peta kosong jika tidak ada data
+      leaflet() %>%
+        addTiles() %>%
+        setView(lng = 106.8456, lat = -6.2088, zoom = 5) %>%
+        addControl("Data tidak tersedia untuk variabel yang dipilih", position = "topright")
+    } else {
+      # Buat palet warna berdasarkan variabel
+      var_values <- map_data_filtered[[input$map_var]]
+      pal <- colorNumeric(
+        palette = input$color_palette,
+        domain = var_values,
+        na.color = "transparent"
       )
+      
+      # Buat popup content
+      popup_content <- paste0(
+        "<strong>", map_data_filtered$DISTRICT_NAME, "</strong><br>",
+        "Provinsi: ", map_data_filtered$PROVINCE_NAME, "<br>",
+        "Kode: ", map_data_filtered$DISTRICTCODE, "<br>",
+        input$map_var, ": ", round(var_values, 2)
+      )
+      
+      # Buat label untuk peta
+      labels <- if(input$show_labels) {
+        sprintf("<strong>%s</strong><br/>%s: %.2f", 
+                map_data_filtered$DISTRICT_NAME, 
+                input$map_var, 
+                var_values)
+      } else {
+        NULL
+      }
+      
+      # Render peta
+      leaflet(map_data_filtered) %>%
+        addProviderTiles(input$map_style) %>%
+        addPolygons(
+          fillColor = ~pal(var_values),
+          weight = 1,
+          opacity = 1,
+          color = "white",
+          dashArray = "3",
+          fillOpacity = input$opacity,
+          highlight = highlightOptions(
+            weight = 2,
+            color = "#666",
+            dashArray = "",
+            fillOpacity = 0.7,
+            bringToFront = TRUE
+          ),
+          label = lapply(labels, HTML),
+          popup = popup_content
+        ) %>%
+        addLegend(
+          pal = pal,
+          values = var_values,
+          opacity = 0.7,
+          title = input$map_var,
+          position = "bottomright"
+        ) %>%
+        setView(lng = 106.8456, lat = -6.2088, zoom = 5)
+    }
   })
-  
   
   # Output interpretasi peta
   output$map_interpretation <- renderText({
@@ -2158,6 +2268,598 @@ server <- function(input, output, session) {
         body_add_par("", style = "Normal") %>%
         body_add_par("4. KESIMPULAN", style = "heading 2") %>%
         body_add_par("Analisis spasial mengungkap variasi kerentanan sosial antar wilayah yang dapat digunakan untuk strategi intervensi yang lebih terarah dan efektif.", style = "Normal")
+      
+      print(doc, target = file)
+    }
+  )
+  
+  # =====================================================================
+  # ANALISIS SPASIAL SEDERHANA - SERVER LOGIC
+  # =====================================================================
+  
+  # Reactive untuk data spasial analysis
+  spatial_analysis_data <- reactive({
+    req(input$spatial_var)
+    
+    # Ambil data numerik untuk analisis spasial
+    var_data <- sovi_data[[input$spatial_var]]
+    var_data <- var_data[!is.na(var_data)]
+    
+    if(length(var_data) < 3) {
+      return(NULL)
+    }
+    
+    list(
+      variable = var_data,
+      n = length(var_data)
+    )
+  })
+  
+  # Clustering Analysis
+  output$clustering_result <- renderPrint({
+    req(input$spatial_var, spatial_analysis_data())
+    
+    data <- spatial_analysis_data()
+    if(is.null(data)) {
+      return("Data tidak mencukupi untuk analisis clustering.")
+    }
+    
+    tryCatch({
+      var_data <- data$variable
+      n <- length(var_data)
+      
+      # K-means clustering
+      set.seed(123)
+      kmeans_result <- kmeans(var_data, centers = 3, nstart = 25)
+      
+      cat("=== CLUSTERING ANALYSIS ===\n")
+      cat("Variabel:", input$spatial_var, "\n")
+      cat("Jumlah Observasi:", n, "\n")
+      cat("Metode Clustering: K-means\n")
+      cat("Jumlah Cluster:", length(unique(kmeans_result$cluster)), "\n")
+      cat("Within-cluster Sum of Squares:", round(kmeans_result$tot.withinss, 4), "\n")
+      cat("Between-cluster Sum of Squares:", round(kmeans_result$betweenss, 4), "\n")
+      cat("Total Sum of Squares:", round(kmeans_result$totss, 4), "\n")
+      
+      # Cluster sizes
+      cluster_sizes <- table(kmeans_result$cluster)
+      cat("Ukuran Cluster:\n")
+      for(i in 1:length(cluster_sizes)) {
+        cat("  Cluster", i, ":", cluster_sizes[i], "observasi\n")
+      }
+      
+    }, error = function(e) {
+      cat("Error dalam analisis clustering:", e$message, "\n")
+    })
+  })
+  
+  output$clustering_plot <- renderPlot({
+    req(input$spatial_var, spatial_analysis_data())
+    
+    data <- spatial_analysis_data()
+    if(is.null(data)) return(NULL)
+    
+    var_data <- data$variable
+    
+    tryCatch({
+      # K-means clustering
+      set.seed(123)
+      kmeans_result <- kmeans(var_data, centers = 3, nstart = 25)
+      
+      par(mfrow = c(1, 2))
+      
+      # Histogram dengan cluster
+      hist(var_data, main = paste("Distribusi", input$spatial_var, "dengan Cluster"), 
+           xlab = input$spatial_var, col = "lightblue", border = "white")
+      abline(v = kmeans_result$centers, col = c("red", "green", "blue"), lwd = 2, lty = 2)
+      
+      # Boxplot per cluster
+      boxplot(var_data ~ kmeans_result$cluster, main = paste("Boxplot per Cluster", input$spatial_var),
+              xlab = "Cluster", ylab = input$spatial_var, col = c("red", "green", "blue"))
+      
+      par(mfrow = c(1, 1))
+      
+    }, error = function(e) {
+      plot(1, 1, type = "n", main = "Error dalam plotting clustering")
+      text(1, 1, paste("Error:", e$message))
+    })
+  })
+  
+  output$clustering_interpretation <- renderText({
+    req(input$spatial_var, spatial_analysis_data())
+    
+    data <- spatial_analysis_data()
+    if(is.null(data)) {
+      return("Tidak ada data yang tersedia untuk interpretasi.")
+    }
+    
+    var_data <- data$variable
+    
+    tryCatch({
+      set.seed(123)
+      kmeans_result <- kmeans(var_data, centers = 3, nstart = 25)
+      
+      cluster_means <- tapply(var_data, kmeans_result$cluster, mean)
+      cluster_sizes <- table(kmeans_result$cluster)
+      
+      paste0("Analisis clustering untuk variabel ", input$spatial_var, " mengidentifikasi ", 
+             length(unique(kmeans_result$cluster)), " kelompok wilayah berdasarkan karakteristik kerentanan sosial. ",
+             "Cluster 1 memiliki rata-rata ", round(cluster_means[1], 3), " dengan ", cluster_sizes[1], " wilayah, ",
+             "Cluster 2 memiliki rata-rata ", round(cluster_means[2], 3), " dengan ", cluster_sizes[2], " wilayah, ",
+             "dan Cluster 3 memiliki rata-rata ", round(cluster_means[3], 3), " dengan ", cluster_sizes[3], " wilayah. ",
+             "Hasil ini dapat digunakan untuk mengembangkan strategi intervensi yang berbeda untuk setiap kelompok wilayah.")
+      
+    }, error = function(e) {
+      paste0("Error dalam interpretasi clustering: ", e$message)
+    })
+  })
+  
+  # Correlation Analysis
+  output$correlation_result <- renderPrint({
+    req(input$spatial_var, spatial_analysis_data())
+    
+    data <- spatial_analysis_data()
+    if(is.null(data)) {
+      return("Data tidak mencukupi untuk analisis korelasi.")
+    }
+    
+    tryCatch({
+      var_data <- data$variable
+      n <- length(var_data)
+      
+      # Hitung korelasi dengan variabel lain
+      numeric_vars <- names(select_if(sovi_data, is.numeric))
+      numeric_vars <- numeric_vars[numeric_vars != input$spatial_var]
+      
+      correlations <- numeric()
+      var_names <- character()
+      
+      for(var in numeric_vars[1:min(5, length(numeric_vars))]) {
+        other_var <- sovi_data[[var]]
+        # Hapus NA dan pastikan panjang sama
+        complete_cases <- !is.na(var_data) & !is.na(other_var)
+        if(sum(complete_cases) > 10) {
+          cor_val <- cor(var_data[complete_cases], other_var[complete_cases], use = "complete.obs")
+          correlations <- c(correlations, cor_val)
+          var_names <- c(var_names, var)
+        }
+      }
+      
+      cat("=== CORRELATION ANALYSIS ===\n")
+      cat("Variabel:", input$spatial_var, "\n")
+      cat("Jumlah Observasi:", n, "\n")
+      cat("Korelasi dengan variabel lain:\n")
+      
+      for(i in 1:length(correlations)) {
+        cat("  ", var_names[i], ":", round(correlations[i], 4), "\n")
+      }
+      
+      if(length(correlations) > 0) {
+        cat("Korelasi terkuat:", var_names[which.max(abs(correlations))], 
+            "(", round(max(abs(correlations)), 4), ")\n")
+      }
+      
+    }, error = function(e) {
+      cat("Error dalam analisis korelasi:", e$message, "\n")
+    })
+  })
+  
+  output$correlation_plot <- renderPlot({
+    req(input$spatial_var, spatial_analysis_data())
+    
+    data <- spatial_analysis_data()
+    if(is.null(data)) return(NULL)
+    
+    var_data <- data$variable
+    
+    tryCatch({
+      # Plot korelasi
+      par(mfrow = c(1, 2))
+      
+      # Histogram
+      hist(var_data, main = paste("Distribusi", input$spatial_var), 
+           xlab = input$spatial_var, col = "lightcoral", border = "white")
+      
+      # Scatter plot dengan variabel lain
+      numeric_vars <- names(select_if(sovi_data, is.numeric))
+      numeric_vars <- numeric_vars[numeric_vars != input$spatial_var]
+      
+      if(length(numeric_vars) > 0) {
+        other_var <- sovi_data[[numeric_vars[1]]]
+        complete_cases <- !is.na(var_data) & !is.na(other_var)
+        if(sum(complete_cases) > 10) {
+          plot(var_data[complete_cases], other_var[complete_cases], 
+               main = paste("Korelasi dengan", numeric_vars[1]),
+               xlab = input$spatial_var, ylab = numeric_vars[1], col = "blue", pch = 19)
+        }
+      }
+      
+      par(mfrow = c(1, 1))
+      
+    }, error = function(e) {
+      plot(1, 1, type = "n", main = "Error dalam plotting korelasi")
+      text(1, 1, paste("Error:", e$message))
+    })
+  })
+  
+  output$correlation_interpretation <- renderText({
+    req(input$spatial_var, spatial_analysis_data())
+    
+    data <- spatial_analysis_data()
+    if(is.null(data)) {
+      return("Tidak ada data yang tersedia untuk interpretasi.")
+    }
+    
+    var_data <- data$variable
+    
+    tryCatch({
+      # Hitung korelasi dengan variabel lain
+      numeric_vars <- names(select_if(sovi_data, is.numeric))
+      numeric_vars <- numeric_vars[numeric_vars != input$spatial_var]
+      
+      correlations <- numeric()
+      var_names <- character()
+      
+      for(var in numeric_vars[1:min(3, length(numeric_vars))]) {
+        other_var <- sovi_data[[var]]
+        complete_cases <- !is.na(var_data) & !is.na(other_var)
+        if(sum(complete_cases) > 10) {
+          cor_val <- cor(var_data[complete_cases], other_var[complete_cases], use = "complete.obs")
+          correlations <- c(correlations, cor_val)
+          var_names <- c(var_names, var)
+        }
+      }
+      
+      if(length(correlations) > 0) {
+        strongest_cor <- which.max(abs(correlations))
+        paste0("Analisis korelasi untuk variabel ", input$spatial_var, " menunjukkan hubungan yang ",
+               if(abs(correlations[strongest_cor]) > 0.7) "kuat" else if(abs(correlations[strongest_cor]) > 0.3) "sedang" else "lemah",
+               " dengan variabel ", var_names[strongest_cor], " (r = ", round(correlations[strongest_cor], 3), "). ",
+               "Hasil ini mengindikasikan bahwa kedua variabel memiliki pola yang ", 
+               if(correlations[strongest_cor] > 0) "searah" else "berlawanan arah", " dalam konteks kerentanan sosial.")
+      } else {
+        paste0("Analisis korelasi untuk variabel ", input$spatial_var, " tidak menemukan hubungan yang signifikan dengan variabel lain dalam dataset.")
+      }
+      
+    }, error = function(e) {
+      paste0("Error dalam interpretasi korelasi: ", e$message)
+    })
+  })
+  
+  # Descriptive Statistics
+  output$descriptive_result <- renderPrint({
+    req(input$spatial_var, spatial_analysis_data())
+    
+    data <- spatial_analysis_data()
+    if(is.null(data)) {
+      return("Data tidak mencukupi untuk analisis statistik deskriptif.")
+    }
+    
+    tryCatch({
+      var_data <- data$variable
+      n <- length(var_data)
+      
+      cat("=== DESCRIPTIVE STATISTICS ===\n")
+      cat("Variabel:", input$spatial_var, "\n")
+      cat("Jumlah Observasi:", n, "\n")
+      cat("Nilai Minimum:", round(min(var_data, na.rm = TRUE), 4), "\n")
+      cat("Nilai Maksimum:", round(max(var_data, na.rm = TRUE), 4), "\n")
+      cat("Rata-rata:", round(mean(var_data, na.rm = TRUE), 4), "\n")
+      cat("Median:", round(median(var_data, na.rm = TRUE), 4), "\n")
+      cat("Standar Deviasi:", round(sd(var_data, na.rm = TRUE), 4), "\n")
+      cat("Nilai yang Hilang:", sum(is.na(var_data)), "\n")
+      
+      # Quartiles
+      quartiles <- quantile(var_data, probs = c(0.25, 0.5, 0.75), na.rm = TRUE)
+      cat("Q1 (25%):", round(quartiles[1], 4), "\n")
+      cat("Q2 (50%):", round(quartiles[2], 4), "\n")
+      cat("Q3 (75%):", round(quartiles[3], 4), "\n")
+      
+      # Range dan IQR
+      cat("Range:", round(max(var_data, na.rm = TRUE) - min(var_data, na.rm = TRUE), 4), "\n")
+      cat("IQR:", round(quartiles[3] - quartiles[1], 4), "\n")
+      
+      # Skewness dan Kurtosis
+      skewness <- if(mean(var_data, na.rm = TRUE) > median(var_data, na.rm = TRUE)) "Positif" else "Negatif"
+      cat("Skewness:", skewness, "\n")
+      
+    }, error = function(e) {
+      cat("Error dalam analisis statistik deskriptif:", e$message, "\n")
+    })
+  })
+  
+  output$descriptive_plot <- renderPlot({
+    req(input$spatial_var, spatial_analysis_data())
+    
+    data <- spatial_analysis_data()
+    if(is.null(data)) return(NULL)
+    
+    var_data <- data$variable
+    
+    tryCatch({
+      par(mfrow = c(2, 2))
+      
+      # Histogram
+      hist(var_data, main = paste("Histogram", input$spatial_var), 
+           xlab = input$spatial_var, col = "lightblue", border = "white")
+      
+      # Boxplot
+      boxplot(var_data, main = paste("Boxplot", input$spatial_var), 
+              col = "lightgreen", border = "darkgreen")
+      
+      # Density plot
+      plot(density(var_data), main = paste("Density Plot", input$spatial_var), 
+           xlab = input$spatial_var, col = "red", lwd = 2)
+      
+      # Q-Q plot
+      qqnorm(var_data, main = paste("Q-Q Plot", input$spatial_var))
+      qqline(var_data, col = "red", lwd = 2)
+      
+      par(mfrow = c(1, 1))
+      
+    }, error = function(e) {
+      plot(1, 1, type = "n", main = "Error dalam plotting statistik deskriptif")
+      text(1, 1, paste("Error:", e$message))
+    })
+  })
+  
+  output$descriptive_interpretation <- renderText({
+    req(input$spatial_var, spatial_analysis_data())
+    
+    data <- spatial_analysis_data()
+    if(is.null(data)) {
+      return("Tidak ada data yang tersedia untuk interpretasi.")
+    }
+    
+    var_data <- data$variable
+    
+    tryCatch({
+      mean_val <- mean(var_data, na.rm = TRUE)
+      median_val <- median(var_data, na.rm = TRUE)
+      sd_val <- sd(var_data, na.rm = TRUE)
+      min_val <- min(var_data, na.rm = TRUE)
+      max_val <- max(var_data, na.rm = TRUE)
+      
+      # Tentukan karakteristik distribusi
+      skewness <- if(mean_val > median_val) "positif (ekor kanan)" else if(mean_val < median_val) "negatif (ekor kiri)" else "simetris"
+      variability <- if(sd_val/mean_val < 0.1) "rendah" else if(sd_val/mean_val < 0.3) "sedang" else "tinggi"
+      
+      paste0("Analisis statistik deskriptif untuk variabel ", input$spatial_var, " menunjukkan rata-rata ", 
+             round(mean_val, 3), " dengan median ", round(median_val, 3), ". ",
+             "Distribusi data menunjukkan kecenderungan ", skewness, " dengan variabilitas ", variability, 
+             " (standar deviasi: ", round(sd_val, 3), "). ",
+             "Nilai berkisar dari ", round(min_val, 3), " hingga ", round(max_val, 3), 
+             " yang menunjukkan ", if(max_val - min_val > 2*sd_val) "variasi yang tinggi" else "variasi yang sedang",
+             " antar wilayah dalam konteks kerentanan sosial.")
+      
+    }, error = function(e) {
+      paste0("Error dalam interpretasi statistik deskriptif: ", e$message)
+    })
+  })
+  
+  output$clustering_plot <- renderPlot({
+    req(input$spatial_var, spatial_analysis_data())
+    
+    data <- spatial_analysis_data()
+    if(is.null(data)) return(NULL)
+    
+    var_data <- data$variable
+    
+    tryCatch({
+      # K-means clustering
+      set.seed(123)
+      kmeans_result <- kmeans(var_data, centers = 3, nstart = 25)
+      
+      par(mfrow = c(1, 2))
+      
+      # Histogram dengan cluster
+      hist(var_data, main = paste("Distribusi", input$spatial_var, "dengan Cluster"), 
+           xlab = input$spatial_var, col = "lightblue", border = "white")
+      abline(v = kmeans_result$centers, col = c("red", "green", "blue"), lwd = 2, lty = 2)
+      
+      # Boxplot per cluster
+      boxplot(var_data ~ kmeans_result$cluster, main = paste("Boxplot per Cluster", input$spatial_var),
+              xlab = "Cluster", ylab = input$spatial_var, col = c("red", "green", "blue"))
+      
+      par(mfrow = c(1, 1))
+      
+    }, error = function(e) {
+      plot(1, 1, type = "n", main = "Error dalam plotting clustering")
+      text(1, 1, paste("Error:", e$message))
+    })
+  })
+  
+  output$clustering_interpretation <- renderText({
+    req(input$spatial_var, spatial_analysis_data())
+    
+    data <- spatial_analysis_data()
+    if(is.null(data)) {
+      return("Tidak ada data yang tersedia untuk interpretasi.")
+    }
+    
+    var_data <- data$variable
+    
+    tryCatch({
+      set.seed(123)
+      kmeans_result <- kmeans(var_data, centers = 3, nstart = 25)
+      
+      cluster_means <- tapply(var_data, kmeans_result$cluster, mean)
+      cluster_sizes <- table(kmeans_result$cluster)
+      
+      paste0("Analisis clustering untuk variabel ", input$spatial_var, " mengidentifikasi ", 
+             length(unique(kmeans_result$cluster)), " kelompok wilayah berdasarkan karakteristik kerentanan sosial. ",
+             "Cluster 1 memiliki rata-rata ", round(cluster_means[1], 3), " dengan ", cluster_sizes[1], " wilayah, ",
+             "Cluster 2 memiliki rata-rata ", round(cluster_means[2], 3), " dengan ", cluster_sizes[2], " wilayah, ",
+             "dan Cluster 3 memiliki rata-rata ", round(cluster_means[3], 3), " dengan ", cluster_sizes[3], " wilayah. ",
+             "Hasil ini dapat digunakan untuk mengembangkan strategi intervensi yang berbeda untuk setiap kelompok wilayah.")
+      
+    }, error = function(e) {
+      paste0("Error dalam interpretasi clustering: ", e$message)
+    })
+  })
+  
+  # Spatial Summary Table
+  output$spatial_summary_table <- DT::renderDataTable({
+    req(input$spatial_var, spatial_analysis_data())
+    
+    data <- spatial_analysis_data()
+    if(is.null(data)) {
+      return(DT::datatable(data.frame(Message = "Tidak ada data yang tersedia")))
+    }
+    
+    var_data <- data$variable
+    
+    # Buat summary table berdasarkan metode yang dipilih
+    if(input$spatial_method == "clustering") {
+      tryCatch({
+        set.seed(123)
+        kmeans_result <- kmeans(var_data, centers = 3, nstart = 25)
+        cluster_means <- tapply(var_data, kmeans_result$cluster, mean)
+        cluster_sizes <- table(kmeans_result$cluster)
+        
+        summary_data <- data.frame(
+          Metrik = c("Jumlah Observasi", "Jumlah Cluster", "Cluster 1 (Rata-rata)", 
+                     "Cluster 2 (Rata-rata)", "Cluster 3 (Rata-rata)", "Ukuran Cluster 1", 
+                     "Ukuran Cluster 2", "Ukuran Cluster 3"),
+          Nilai = c(length(var_data), length(unique(kmeans_result$cluster)),
+                    round(cluster_means[1], 4), round(cluster_means[2], 4), round(cluster_means[3], 4),
+                    cluster_sizes[1], cluster_sizes[2], cluster_sizes[3])
+        )
+      }, error = function(e) {
+        summary_data <- data.frame(
+          Metrik = c("Jumlah Observasi", "Rata-rata", "Median", "Standar Deviasi"),
+          Nilai = c(length(var_data), round(mean(var_data, na.rm = TRUE), 4),
+                    round(median(var_data, na.rm = TRUE), 4), round(sd(var_data, na.rm = TRUE), 4))
+        )
+      })
+    } else {
+      summary_data <- data.frame(
+        Metrik = c("Jumlah Observasi", "Rata-rata", "Median", "Standar Deviasi", 
+                   "Minimum", "Maksimum", "Q1", "Q3", "IQR"),
+        Nilai = c(length(var_data), 
+                  round(mean(var_data, na.rm = TRUE), 4),
+                  round(median(var_data, na.rm = TRUE), 4),
+                  round(sd(var_data, na.rm = TRUE), 4),
+                  round(min(var_data, na.rm = TRUE), 4),
+                  round(max(var_data, na.rm = TRUE), 4),
+                  round(quantile(var_data, 0.25, na.rm = TRUE), 4),
+                  round(quantile(var_data, 0.75, na.rm = TRUE), 4),
+                  round(IQR(var_data, na.rm = TRUE), 4))
+      )
+    }
+    
+    DT::datatable(summary_data,
+                  options = list(pageLength = 10, scrollX = TRUE),
+                  class = 'cell-border stripe hover',
+                  rownames = FALSE)
+  })
+  
+  # Download handlers untuk analisis spasial
+  output$download_spatial_analysis <- downloadHandler(
+    filename = function() {
+      paste0("laporan_analisis_spasial_", input$spatial_var, "_", Sys.Date(), ".docx")
+    },
+    content = function(file) {
+      req(input$spatial_var, spatial_analysis_data())
+      
+      data <- spatial_analysis_data()
+      if(is.null(data)) {
+        doc <- read_docx() %>%
+          body_add_par("LAPORAN ANALISIS SPASIAL SOVI", style = "heading 1") %>%
+          body_add_par("Tidak ada data yang tersedia untuk analisis.", style = "Normal")
+        print(doc, target = file)
+        return()
+      }
+      
+      var_data <- data$variable
+      
+      doc <- read_docx() %>%
+        body_add_par("LAPORAN ANALISIS SPASIAL SOVI", style = "heading 1") %>%
+        body_add_par("SOVI-STAT EXPLORER", style = "heading 2") %>%
+        body_add_par(paste("Tanggal:", Sys.Date()), style = "Normal") %>%
+        body_add_par("", style = "Normal") %>%
+        body_add_par("1. RINGKASAN EKSEKUTIF", style = "heading 2") %>%
+        body_add_par("Laporan ini menyajikan hasil analisis spasial menggunakan berbagai metode statistik untuk mengidentifikasi pola kerentanan sosial di berbagai wilayah Indonesia.", style = "Normal") %>%
+        body_add_par("", style = "Normal") %>%
+        body_add_par("2. METODOLOGI", style = "heading 2") %>%
+        body_add_par(paste("Variabel yang dianalisis:", input$spatial_var), style = "Normal") %>%
+        body_add_par(paste("Metode analisis:", input$spatial_method), style = "Normal") %>%
+        body_add_par(paste("Jumlah observasi:", length(var_data)), style = "Normal") %>%
+        body_add_par("", style = "Normal") %>%
+        body_add_par("3. STATISTIK DESKRIPTIF", style = "heading 2") %>%
+        body_add_par(paste("Rata-rata:", round(mean(var_data, na.rm = TRUE), 4)), style = "Normal") %>%
+        body_add_par(paste("Median:", round(median(var_data, na.rm = TRUE), 4)), style = "Normal") %>%
+        body_add_par(paste("Standar Deviasi:", round(sd(var_data, na.rm = TRUE), 4)), style = "Normal") %>%
+        body_add_par("", style = "Normal") %>%
+        body_add_par("4. KESIMPULAN", style = "heading 2") %>%
+        body_add_par("Analisis spasial mengungkap pola kerentanan sosial yang dapat digunakan untuk pengembangan strategi intervensi yang lebih efektif.", style = "Normal")
+      
+      print(doc, target = file)
+    }
+  )
+  
+  output$download_spatial_data <- downloadHandler(
+    filename = function() {
+      paste0("data_analisis_spasial_", input$spatial_var, "_", Sys.Date(), ".csv")
+    },
+    content = function(file) {
+      req(input$spatial_var, spatial_analysis_data())
+      
+      data <- spatial_analysis_data()
+      if(is.null(data)) {
+        write.csv(data.frame(Message = "Tidak ada data yang tersedia"), file, row.names = FALSE)
+        return()
+      }
+      
+      var_data <- data$variable
+      
+      # Export data analisis spasial
+      export_data <- data.frame(
+        Index = 1:length(var_data),
+        Variable = input$spatial_var,
+        Value = var_data
+      )
+      
+      write.csv(export_data, file, row.names = FALSE)
+    }
+  )
+  
+  output$download_spatial_complete <- downloadHandler(
+    filename = function() {
+      paste0("laporan_lengkap_analisis_spasial_", Sys.Date(), ".docx")
+    },
+    content = function(file) {
+      req(input$spatial_var, spatial_analysis_data())
+      
+      data <- spatial_analysis_data()
+      if(is.null(data)) {
+        doc <- read_docx() %>%
+          body_add_par("LAPORAN LENGKAP ANALISIS SPASIAL SOVI", style = "heading 1") %>%
+          body_add_par("Tidak ada data yang tersedia untuk analisis.", style = "Normal")
+        print(doc, target = file)
+        return()
+      }
+      
+      var_data <- data$variable
+      
+      doc <- read_docx() %>%
+        body_add_par("LAPORAN LENGKAP ANALISIS SPASIAL SOVI", style = "heading 1") %>%
+        body_add_par("SOVI-STAT EXPLORER", style = "heading 2") %>%
+        body_add_par(paste("Tanggal:", Sys.Date()), style = "Normal") %>%
+        body_add_par("", style = "Normal") %>%
+        body_add_par("1. RINGKASAN EKSEKUTIF", style = "heading 2") %>%
+        body_add_par("Laporan komprehensif ini menyajikan hasil analisis spasial menggunakan berbagai metode statistik untuk mengidentifikasi pola kerentanan sosial di berbagai wilayah Indonesia.", style = "Normal") %>%
+        body_add_par("", style = "Normal") %>%
+        body_add_par("2. METODOLOGI", style = "heading 2") %>%
+        body_add_par(paste("Variabel yang dianalisis:", input$spatial_var), style = "Normal") %>%
+        body_add_par(paste("Metode analisis:", input$spatial_method), style = "Normal") %>%
+        body_add_par(paste("Jumlah observasi:", length(var_data)), style = "Normal") %>%
+        body_add_par("", style = "Normal") %>%
+        body_add_par("3. HASIL ANALISIS", style = "heading 2") %>%
+        body_add_par("Analisis spasial mengungkap variasi kerentanan sosial antar wilayah yang dapat digunakan untuk strategi intervensi yang lebih terarah dan efektif.", style = "Normal") %>%
+        body_add_par("", style = "Normal") %>%
+        body_add_par("4. KESIMPULAN", style = "heading 2") %>%
+        body_add_par("Hasil analisis spasial memberikan wawasan penting untuk pengembangan kebijakan dan program pengurangan kerentanan sosial yang lebih efektif.", style = "Normal")
       
       print(doc, target = file)
     }
@@ -3736,83 +4438,6 @@ server <- function(input, output, session) {
       print(doc, target = file)
     }
   )
-  
-  # =====================================================================
-  # MORAN'S I - VERSI PERBAIKAN REAKTIVITAS FINAL
-  # =====================================================================
-  
-  # 1. BUAT REAKTIF UNTUK KALKULASI
-  # eventReactive akan berjalan HANYA ketika input$run_moran di-klik
-  moran_calculation <- eventReactive(input$run_moran, {
-    
-    # Pastikan variabel dari dropdown ada
-    req(input$map_var)
-    
-    # Ambil data dari kolom yang TEPAT
-    var_to_test <- sovi_data[[input$map_var]]
-    
-    # Dapatkan indeks baris yang valid (bukan NA)
-    valid_indices <- which(!is.na(var_to_test))
-    
-    # Cek jika data cukup
-    if (length(valid_indices) < 2) {
-      return(list(error = "Data tidak mencukupi untuk analisis (kurang dari 2 nilai valid)."))
-    }
-    
-    # Filter variabel yang akan diuji
-    var_filtered <- var_to_test[valid_indices]
-    
-    # Buat ulang matriks bobot yang sudah difilter
-    dist_matrix_filtered <- dist_matrix_raw[valid_indices, valid_indices]
-    inv_dist_filtered <- 1 / (dist_matrix_filtered + 1e-9)
-    diag(inv_dist_filtered) <- 0
-    weights_for_test <- mat2listw(inv_dist_filtered, style = "W")
-    
-    # Jalankan uji dan kembalikan hasilnya
-    tryCatch({
-      moran.test(var_filtered, listw = weights_for_test, na.action = na.fail)
-    }, error = function(e) {
-      list(error = paste("Gagal menjalankan Uji Moran's I:", e$message))
-    })
-  })
-  
-  # 2. RENDER OUTPUT TEKS BERDASARKAN HASIL REAKTIF
-  output$moran_test_result <- renderPrint({
-    # Panggil hasil kalkulasi reaktif
-    result <- moran_calculation()
-    
-    # Jika ada error, tampilkan, jika tidak, print hasilnya
-    if (!is.null(result$error)) {
-      result$error
-    } else {
-      print(result)
-    }
-  })
-  
-  # 3. RENDER INTERPRETASI BERDASARKAN HASIL REAKTIF
-  output$moran_interpretation <- renderText({
-    # Panggil hasil kalkulasi reaktif
-    result <- moran_calculation()
-    
-    # Jangan tampilkan apa-apa jika ada error
-    if (!is.null(result$error)) {
-      return("")
-    }
-    
-    # Buat interpretasi
-    p_val <- result$p.value
-    moran_I <- result$estimate[1]
-    
-    if (p_val < 0.05) {
-      if (moran_I > 0) {
-        paste("Hasilnya signifikan (p < 0.05). Nilai Moran's I positif (", round(moran_I, 4), ") menunjukkan adanya pola MENGELOMPOK (clustered). Wilayah dengan nilai serupa (tinggi-tinggi atau rendah-rendah) cenderung berdekatan.")
-      } else {
-        paste("Hasilnya signifikan (p < 0.05). Nilai Moran's I negatif (", round(moran_I, 4), ") menunjukkan adanya pola MENYEBAR (dispersed). Wilayah dengan nilai tinggi cenderung berdekatan dengan wilayah bernilai rendah (pola seperti papan catur).")
-      }
-    } else {
-      paste("Hasilnya tidak signifikan (p >= 0.05). Tidak ada cukup bukti adanya pola spasial. Distribusi nilai variabel di seluruh wilayah cenderung ACAK (random).")
-    }
-  })
 }
 
 # ===============================================================================

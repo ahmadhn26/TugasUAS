@@ -30,11 +30,6 @@ library(RColorBrewer)
 library(mapview)
 library(spdep)
 
-
-
-
-
-
 # ===============================================================================
 # 2. PEMUATAN DAN PERSIAPAN DATA - DIPERBAIKI
 # ===============================================================================
@@ -3738,79 +3733,70 @@ server <- function(input, output, session) {
   )
   
   # =====================================================================
-  # MORAN'S I - VERSI PERBAIKAN REAKTIVITAS FINAL
+  # OBSERVE EVENT UNTUK MORAN'S I - PENDEKATAN BARU DAN BENAR
   # =====================================================================
-  
-  # 1. BUAT REAKTIF UNTUK KALKULASI
-  # eventReactive akan berjalan HANYA ketika input$run_moran di-klik
-  moran_calculation <- eventReactive(input$run_moran, {
+  observeEvent(input$run_moran, {
     
-    # Pastikan variabel dari dropdown ada
+    # 1. Validasi Input
     req(input$map_var)
     
-    # Ambil data dari kolom yang TEPAT
+    # 2. Pengambilan Data dari Sumber yang TEPAT
     var_to_test <- sovi_data[[input$map_var]]
     
+    # 3. Penanganan NA yang Benar
     # Dapatkan indeks baris yang valid (bukan NA)
     valid_indices <- which(!is.na(var_to_test))
     
-    # Cek jika data cukup
+    # Hentikan jika tidak ada data valid
     if (length(valid_indices) < 2) {
-      return(list(error = "Data tidak mencukupi untuk analisis (kurang dari 2 nilai valid)."))
+      output$moran_test_result <- renderPrint({ "Error: Data tidak mencukupi untuk analisis (kurang dari 2 nilai valid)." })
+      output$moran_interpretation <- renderText({ "" })
+      return()
     }
     
     # Filter variabel yang akan diuji
     var_filtered <- var_to_test[valid_indices]
     
-    # Buat ulang matriks bobot yang sudah difilter
+    # 4. MEMBUAT ULANG BOBOT SPASIAL (INI SOLUSINYA)
+    # Alih-alih memfilter 'listw', kita filter matriks jarak mentah, lalu buat 'listw' baru
+    
+    # Filter matriks jarak mentah (baris dan kolom) untuk hanya menyertakan data yang valid
     dist_matrix_filtered <- dist_matrix_raw[valid_indices, valid_indices]
+    
+    # Buat matriks bobot invers baru dari matriks yang sudah difilter
     inv_dist_filtered <- 1 / (dist_matrix_filtered + 1e-9)
     diag(inv_dist_filtered) <- 0
+    
+    # Konversi menjadi objek 'listw' yang ukurannya sudah pas
     weights_for_test <- mat2listw(inv_dist_filtered, style = "W")
     
-    # Jalankan uji dan kembalikan hasilnya
-    tryCatch({
+    # 5. Lakukan Uji Moran's I dengan data dan bobot yang sudah cocok
+    moran_result <- tryCatch({
       moran.test(var_filtered, listw = weights_for_test, na.action = na.fail)
     }, error = function(e) {
-      list(error = paste("Gagal menjalankan Uji Moran's I:", e$message))
+      return(list(error = paste("Gagal menjalankan Uji Moran's I:", e$message)))
     })
-  })
-  
-  # 2. RENDER OUTPUT TEKS BERDASARKAN HASIL REAKTIF
-  output$moran_test_result <- renderPrint({
-    # Panggil hasil kalkulasi reaktif
-    result <- moran_calculation()
     
-    # Jika ada error, tampilkan, jika tidak, print hasilnya
-    if (!is.null(result$error)) {
-      result$error
+    # 6. Tampilkan Hasil dan Interpretasi (sama seperti sebelumnya)
+    if (!is.null(moran_result$error)) {
+      output$moran_test_result <- renderPrint({ moran_result$error })
+      output$moran_interpretation <- renderText({ "" })
     } else {
-      print(result)
-    }
-  })
-  
-  # 3. RENDER INTERPRETASI BERDASARKAN HASIL REAKTIF
-  output$moran_interpretation <- renderText({
-    # Panggil hasil kalkulasi reaktif
-    result <- moran_calculation()
-    
-    # Jangan tampilkan apa-apa jika ada error
-    if (!is.null(result$error)) {
-      return("")
-    }
-    
-    # Buat interpretasi
-    p_val <- result$p.value
-    moran_I <- result$estimate[1]
-    
-    if (p_val < 0.05) {
-      if (moran_I > 0) {
-        paste("Hasilnya signifikan (p < 0.05). Nilai Moran's I positif (", round(moran_I, 4), ") menunjukkan adanya pola MENGELOMPOK (clustered). Wilayah dengan nilai serupa (tinggi-tinggi atau rendah-rendah) cenderung berdekatan.")
-      } else {
-        paste("Hasilnya signifikan (p < 0.05). Nilai Moran's I negatif (", round(moran_I, 4), ") menunjukkan adanya pola MENYEBAR (dispersed). Wilayah dengan nilai tinggi cenderung berdekatan dengan wilayah bernilai rendah (pola seperti papan catur).")
-      }
-    } else {
-      paste("Hasilnya tidak signifikan (p >= 0.05). Tidak ada cukup bukti adanya pola spasial. Distribusi nilai variabel di seluruh wilayah cenderung ACAK (random).")
+      output$moran_test_result <- renderPrint({ print(moran_result) })
+      output$moran_interpretation <- renderText({
+        p_val <- moran_result$p.value
+        moran_I <- moran_result$estimate[1]
+        
+        if (p_val < 0.05) {
+          if (moran_I > 0) {
+            paste("Hasilnya signifikan (p < 0.05). Nilai Moran's I positif (", round(moran_I, 4), ") menunjukkan adanya pola MENGELOMPOK (clustered). Wilayah dengan nilai serupa (tinggi-tinggi atau rendah-rendah) cenderung berdekatan.")
+          } else {
+            paste("Hasilnya signifikan (p < 0.05). Nilai Moran's I negatif (", round(moran_I, 4), ") menunjukkan adanya pola MENYEBAR (dispersed). Wilayah dengan nilai tinggi cenderung berdekatan dengan wilayah bernilai rendah (pola seperti papan catur).")
+          }
+        } else {
+          paste("Hasilnya tidak signifikan (p >= 0.05). Tidak ada cukup bukti adanya pola spasial. Distribusi nilai variabel di seluruh wilayah cenderung ACAK (random).")
+        }
+      })
     }
   })
 }

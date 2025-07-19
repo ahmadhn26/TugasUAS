@@ -103,7 +103,7 @@ load_data <- function() {
 load_spatial_data <- function() {
   #tryCatch({
   # Coba muat data spasial dari file GPKG
-  spatial_data <- st_read("C:/UAS Komstat 2/data/peta_sovi_sederhana.gpkg", quiet = TRUE)
+  spatial_data <- st_read("data/peta_sovi_sederhana.gpkg", quiet = TRUE)
   
   
   
