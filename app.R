@@ -3932,163 +3932,164 @@ server <- function(input, output, session) {
   )
 
   # 1. Moran's I
-  downloadHandler(
-    filename = function() paste0("hasil_moran_", input$map_var, "_", Sys.Date(), ".docx"),
-    content = function(file) {
-      result <- moran_calculation()
-      doc <- officer::read_docx() %>%
-        officer::body_add_par("HASIL UJI MORAN'S I", style = "heading 1") %>%
-        officer::body_add_par(capture.output(print(result)), style = "Normal")
-      print(doc, target = file)
-    }
-  )
-  # Plot Moran's I
-  downloadHandler(
-    filename = function() paste0("plot_moran_", input$map_var, "_", Sys.Date(), ".jpg"),
-    content = function(file) {
-      result <- moran_calculation()
-      jpeg(file, width = 800, height = 600, quality = 95)
-      if (!is.null(result$estimate)) {
-        barplot(result$res, main = "Moran's I Plot", col = "skyblue")
-      } else {
-        plot.new(); text(0.5, 0.5, "Tidak ada plot.")
+  define_downloads <- function(output, moran_calculation, input, officer) {
+    output$download_moran_result <- downloadHandler(
+      filename = function() paste0("hasil_moran_", input$map_var, "_", Sys.Date(), ".docx"),
+      content = function(file) {
+        result <- moran_calculation()
+        doc <- officer::read_docx() %>%
+          officer::body_add_par("HASIL UJI MORAN'S I", style = "heading 1") %>%
+          officer::body_add_par(capture.output(print(result)), style = "Normal")
+        print(doc, target = file)
       }
-      dev.off()
-    }
-  )
-  # Interpretasi Moran's I
-  downloadHandler(
-    filename = function() paste0("interpretasi_moran_", input$map_var, "_", Sys.Date(), ".docx"),
-    content = function(file) {
-      result <- moran_calculation()
-      doc <- officer::read_docx() %>%
-        officer::body_add_par("INTERPRETASI MORAN'S I", style = "heading 1") %>%
-        officer::body_add_par(output$moran_interpretation(), style = "Normal")
-      print(doc, target = file)
-    }
-  )
-  # 2. Uji Asumsi (Normalitas, Homogenitas)
-  downloadHandler(
-    filename = function() paste0("plot_normalitas_", input$assumption_var, "_", Sys.Date(), ".jpg"),
-    content = function(file) {
-      jpeg(file, width = 800, height = 600, quality = 95)
-      print(output$normality_plot())
-      dev.off()
-    }
-  )
-  downloadHandler(
-    filename = function() paste0("interpretasi_normalitas_", input$assumption_var, "_", Sys.Date(), ".docx"),
-    content = function(file) {
-      doc <- officer::read_docx() %>%
-        officer::body_add_par("INTERPRETASI UJI NORMALITAS", style = "heading 1") %>%
-        officer::body_add_par(output$normality_interpretation(), style = "Normal")
-      print(doc, target = file)
-    }
-  )
-  downloadHandler(
-    filename = function() paste0("plot_homogenitas_", input$assumption_var, "_", Sys.Date(), ".jpg"),
-    content = function(file) {
-      jpeg(file, width = 800, height = 600, quality = 95)
-      print(output$homogeneity_plot())
-      dev.off()
-    }
-  )
-  downloadHandler(
-    filename = function() paste0("interpretasi_homogenitas_", input$assumption_var, "_", Sys.Date(), ".docx"),
-    content = function(file) {
-      doc <- officer::read_docx() %>%
-        officer::body_add_par("INTERPRETASI UJI HOMOGENITAS", style = "heading 1") %>%
-        officer::body_add_par(output$homogeneity_interpretation(), style = "Normal")
-      print(doc, target = file)
-    }
-  )
-  # 3. Inferensia (T-Test, ANOVA, Proporsi/Varian)
-  downloadHandler(
-    filename = function() paste0("plot_ttest_", input$t_test_var, "_", Sys.Date(), ".jpg"),
-    content = function(file) {
-      jpeg(file, width = 800, height = 600, quality = 95)
-      print(output$t_test_plot())
-      dev.off()
-    }
-  )
-  downloadHandler(
-    filename = function() paste0("interpretasi_ttest_", input$t_test_var, "_", Sys.Date(), ".docx"),
-    content = function(file) {
-      doc <- officer::read_docx() %>%
-        officer::body_add_par("INTERPRETASI UJI T-TEST", style = "heading 1") %>%
-        officer::body_add_par(output$t_test_interpretation(), style = "Normal")
-      print(doc, target = file)
-    }
-  )
-  downloadHandler(
-    filename = function() paste0("plot_propvar_", input$var_test_var, "_", Sys.Date(), ".jpg"),
-    content = function(file) {
-      jpeg(file, width = 800, height = 600, quality = 95)
-      print(output$prop_var_plot())
-      dev.off()
-    }
-  )
-  downloadHandler(
-    filename = function() paste0("interpretasi_propvar_", input$var_test_var, "_", Sys.Date(), ".docx"),
-    content = function(file) {
-      doc <- officer::read_docx() %>%
-        officer::body_add_par("INTERPRETASI UJI RAGAM", style = "heading 1") %>%
-        officer::body_add_par(output$prop_var_interpretation(), style = "Normal")
-      print(doc, target = file)
-    }
-  )
-  downloadHandler(
-    filename = function() paste0("plot_anova_", input$anova_y, "_", Sys.Date(), ".jpg"),
-    content = function(file) {
-      jpeg(file, width = 800, height = 600, quality = 95)
-      print(output$anova_plot())
-      dev.off()
-    }
-  )
-  downloadHandler(
-    filename = function() paste0("interpretasi_anova_", input$anova_y, "_", Sys.Date(), ".docx"),
-    content = function(file) {
-      doc <- officer::read_docx() %>%
-        officer::body_add_par("INTERPRETASI ANOVA", style = "heading 1") %>%
-        officer::body_add_par(output$anova_interpretation(), style = "Normal")
-      print(doc, target = file)
-    }
-  )
-  # 4. Regresi
-  downloadHandler(
-    filename = function() paste0("plot_regresi_", input$reg_y, "_", Sys.Date(), ".jpg"),
-    content = function(file) {
-      jpeg(file, width = 800, height = 600, quality = 95)
-      print(output$regression_scatter_plot())
-      dev.off()
-    }
-  )
-  downloadHandler(
-    filename = function() paste0("interpretasi_plot_regresi_", input$reg_y, "_", Sys.Date(), ".docx"),
-    content = function(file) {
-      doc <- officer::read_docx() %>%
-        officer::body_add_par("INTERPRETASI PLOT REGRESI", style = "heading 1") %>%
-        officer::body_add_par(output$regression_plot_interpretation(), style = "Normal")
-      print(doc, target = file)
-    }
-  )
-  downloadHandler(
-    filename = function() paste0("plot_diag_regresi_", input$reg_y, "_", Sys.Date(), ".jpg"),
-    content = function(file) {
-      jpeg(file, width = 800, height = 600, quality = 95)
-      print(output$regression_plots())
-      dev.off()
-    }
-  )
-  downloadHandler(
-    filename = function() paste0("interpretasi_regresi_", input$reg_y, "_", Sys.Date(), ".docx"),
-    content = function(file) {
-      doc <- officer::read_docx() %>%
-        officer::body_add_par("INTERPRETASI MODEL REGRESI", style = "heading 1") %>%
-        officer::body_add_par(output$regression_interpretation(), style = "Normal")
-      print(doc, target = file)
-    }
-  )
+    )
+    output$download_moran_plot <- downloadHandler(
+      filename = function() paste0("plot_moran_", input$map_var, "_", Sys.Date(), ".jpg"),
+      content = function(file) {
+        result <- moran_calculation()
+        jpeg(file, width = 800, height = 600, quality = 95)
+        if (!is.null(result$estimate)) {
+          barplot(result$res, main = "Moran's I Plot", col = "skyblue")
+        } else {
+          plot.new(); text(0.5, 0.5, "Tidak ada plot.")
+        }
+        dev.off()
+      }
+    )
+    output$download_moran_interpretation <- downloadHandler(
+      filename = function() paste0("interpretasi_moran_", input$map_var, "_", Sys.Date(), ".docx"),
+      content = function(file) {
+        result <- moran_calculation()
+        doc <- officer::read_docx() %>%
+          officer::body_add_par("INTERPRETASI MORAN'S I", style = "heading 1") %>%
+          officer::body_add_par(output$moran_interpretation(), style = "Normal")
+        print(doc, target = file)
+      }
+    )
+    # 2. Uji Asumsi
+    output$download_normality_plot <- downloadHandler(
+      filename = function() paste0("plot_normalitas_", input$assumption_var, "_", Sys.Date(), ".jpg"),
+      content = function(file) {
+        jpeg(file, width = 800, height = 600, quality = 95)
+        print(output$normality_plot())
+        dev.off()
+      }
+    )
+    output$download_normality_interpretation <- downloadHandler(
+      filename = function() paste0("interpretasi_normalitas_", input$assumption_var, "_", Sys.Date(), ".docx"),
+      content = function(file) {
+        doc <- officer::read_docx() %>%
+          officer::body_add_par("INTERPRETASI UJI NORMALITAS", style = "heading 1") %>%
+          officer::body_add_par(output$normality_interpretation(), style = "Normal")
+        print(doc, target = file)
+      }
+    )
+    output$download_homogeneity_plot <- downloadHandler(
+      filename = function() paste0("plot_homogenitas_", input$assumption_var, "_", Sys.Date(), ".jpg"),
+      content = function(file) {
+        jpeg(file, width = 800, height = 600, quality = 95)
+        print(output$homogeneity_plot())
+        dev.off()
+      }
+    )
+    output$download_homogeneity_interpretation <- downloadHandler(
+      filename = function() paste0("interpretasi_homogenitas_", input$assumption_var, "_", Sys.Date(), ".docx"),
+      content = function(file) {
+        doc <- officer::read_docx() %>%
+          officer::body_add_par("INTERPRETASI UJI HOMOGENITAS", style = "heading 1") %>%
+          officer::body_add_par(output$homogeneity_interpretation(), style = "Normal")
+        print(doc, target = file)
+      }
+    )
+    # 3. Inferensia
+    output$download_ttest_plot <- downloadHandler(
+      filename = function() paste0("plot_ttest_", input$t_test_var, "_", Sys.Date(), ".jpg"),
+      content = function(file) {
+        jpeg(file, width = 800, height = 600, quality = 95)
+        print(output$t_test_plot())
+        dev.off()
+      }
+    )
+    output$download_ttest_interpretation <- downloadHandler(
+      filename = function() paste0("interpretasi_ttest_", input$t_test_var, "_", Sys.Date(), ".docx"),
+      content = function(file) {
+        doc <- officer::read_docx() %>%
+          officer::body_add_par("INTERPRETASI UJI T-TEST", style = "heading 1") %>%
+          officer::body_add_par(output$t_test_interpretation(), style = "Normal")
+        print(doc, target = file)
+      }
+    )
+    output$download_propvar_plot <- downloadHandler(
+      filename = function() paste0("plot_propvar_", input$var_test_var, "_", Sys.Date(), ".jpg"),
+      content = function(file) {
+        jpeg(file, width = 800, height = 600, quality = 95)
+        print(output$prop_var_plot())
+        dev.off()
+      }
+    )
+    output$download_propvar_interpretation <- downloadHandler(
+      filename = function() paste0("interpretasi_propvar_", input$var_test_var, "_", Sys.Date(), ".docx"),
+      content = function(file) {
+        doc <- officer::read_docx() %>%
+          officer::body_add_par("INTERPRETASI UJI RAGAM", style = "heading 1") %>%
+          officer::body_add_par(output$prop_var_interpretation(), style = "Normal")
+        print(doc, target = file)
+      }
+    )
+    output$download_anova_plot <- downloadHandler(
+      filename = function() paste0("plot_anova_", input$anova_y, "_", Sys.Date(), ".jpg"),
+      content = function(file) {
+        jpeg(file, width = 800, height = 600, quality = 95)
+        print(output$anova_plot())
+        dev.off()
+      }
+    )
+    output$download_anova_interpretation <- downloadHandler(
+      filename = function() paste0("interpretasi_anova_", input$anova_y, "_", Sys.Date(), ".docx"),
+      content = function(file) {
+        doc <- officer::read_docx() %>%
+          officer::body_add_par("INTERPRETASI ANOVA", style = "heading 1") %>%
+          officer::body_add_par(output$anova_interpretation(), style = "Normal")
+        print(doc, target = file)
+      }
+    )
+    # 4. Regresi
+    output$download_regression_scatter <- downloadHandler(
+      filename = function() paste0("plot_regresi_", input$reg_y, "_", Sys.Date(), ".jpg"),
+      content = function(file) {
+        jpeg(file, width = 800, height = 600, quality = 95)
+        print(output$regression_scatter_plot())
+        dev.off()
+      }
+    )
+    output$download_regression_scatter_interpretation <- downloadHandler(
+      filename = function() paste0("interpretasi_plot_regresi_", input$reg_y, "_", Sys.Date(), ".docx"),
+      content = function(file) {
+        doc <- officer::read_docx() %>%
+          officer::body_add_par("INTERPRETASI PLOT REGRESI", style = "heading 1") %>%
+          officer::body_add_par(output$regression_plot_interpretation(), style = "Normal")
+        print(doc, target = file)
+      }
+    )
+    output$download_regression_diag <- downloadHandler(
+      filename = function() paste0("plot_diag_regresi_", input$reg_y, "_", Sys.Date(), ".jpg"),
+      content = function(file) {
+        jpeg(file, width = 800, height = 600, quality = 95)
+        print(output$regression_plots())
+        dev.off()
+      }
+    )
+    output$download_regression_interpretation <- downloadHandler(
+      filename = function() paste0("interpretasi_regresi_", input$reg_y, "_", Sys.Date(), ".docx"),
+      content = function(file) {
+        doc <- officer::read_docx() %>%
+          officer::body_add_par("INTERPRETASI MODEL REGRESI", style = "heading 1") %>%
+          officer::body_add_par(output$regression_interpretation(), style = "Normal")
+        print(doc, target = file)
+      }
+    )
+  }
+  define_downloads(output, moran_calculation, input, officer)
 }
 
 # ===============================================================================
