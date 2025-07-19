@@ -623,7 +623,23 @@ ui <- dashboardPage(
                 box(
                   title = "🗺️ Peta Interaktif SOVI Indonesia",
                   status = "info", solidHeader = TRUE, width = 8, class = "custom-box",
-                  leafletOutput("sovi_map", height = "600px")
+                  leafletOutput("sovi_map", height = "600px"),
+                  br(),
+                  div(class = "interpretation-box",
+                      h4("📊 Interpretasi Peta"),
+                      textOutput("map_interpretation"),
+                      div(class = "download-section",
+                          downloadButton("download_map_interpretation", "📥 Download Interpretasi (Word)", class = "btn-primary", icon = icon("file-word"))
+                      )
+                  ),
+                  br(),
+                  div(class = "interpretation-box",
+                      h4("📊 Statistik Peta"),
+                      verbatimTextOutput("map_stats"),
+                      div(class = "download-section",
+                          downloadButton("download_map_stats", "📥 Download Statistik (Word)", class = "btn-success", icon = icon("file-word"))
+                      )
+                  )
                 )
               ),
               
@@ -3813,6 +3829,72 @@ server <- function(input, output, session) {
       paste("Hasilnya tidak signifikan (p >= 0.05). Tidak ada cukup bukti adanya pola spasial. Distribusi nilai variabel di seluruh wilayah cenderung ACAK (random).")
     }
   })
+
+  # Download handler untuk interpretasi peta
+  output$download_map_interpretation <- downloadHandler(
+    filename = function() {
+      paste0("interpretasi_peta_", input$map_var, "_", Sys.Date(), ".docx")
+    },
+    content = function(file) {
+      req(input$map_var, map_data())
+      map_data_filtered <- map_data()
+      interpretation <- if(is.null(map_data_filtered) || nrow(map_data_filtered) == 0) {
+        "Tidak ada data yang tersedia untuk interpretasi peta."
+      } else {
+        var_values <- map_data_filtered[[input$map_var]]
+        mean_val <- mean(var_values, na.rm = TRUE)
+        high_regions <- sum(var_values > mean_val, na.rm = TRUE)
+        low_regions <- sum(var_values <= mean_val, na.rm = TRUE)
+        q95 <- quantile(var_values, 0.95, na.rm = TRUE)
+        q05 <- quantile(var_values, 0.05, na.rm = TRUE)
+        extreme_high <- sum(var_values >= q95, na.rm = TRUE)
+        extreme_low <- sum(var_values <= q05, na.rm = TRUE)
+        paste0("Peta interaktif menampilkan distribusi spasial variabel ", input$map_var, " di seluruh wilayah Indonesia. ",
+               "Dari ", length(var_values), " wilayah yang dianalisis, ", high_regions, " wilayah memiliki nilai di atas rata-rata (", round(mean_val, 3), "), ",
+               "sedangkan ", low_regions, " wilayah memiliki nilai di bawah rata-rata. ",
+               "Terdapat ", extreme_high, " wilayah dengan nilai sangat tinggi (percentile 95+) dan ", extreme_low, " wilayah dengan nilai sangat rendah (percentile 5-). ",
+               "Pola spasial ini mengindikasikan adanya variasi kerentanan sosial yang signifikan antar wilayah, ",
+               "yang dapat digunakan untuk mengidentifikasi area prioritas dalam program pengurangan kerentanan sosial.")
+      }
+      doc <- officer::read_docx() %>%
+        officer::body_add_par("INTERPRETASI PETA SOVI", style = "heading 1") %>%
+        officer::body_add_par(interpretation, style = "Normal")
+      print(doc, target = file)
+    }
+  )
+
+  # Download handler untuk statistik peta
+  output$download_map_stats <- downloadHandler(
+    filename = function() {
+      paste0("statistik_peta_", input$map_var, "_", Sys.Date(), ".docx")
+    },
+    content = function(file) {
+      req(input$map_var, map_data())
+      map_data_filtered <- map_data()
+      interpretation <- if(is.null(map_data_filtered) || nrow(map_data_filtered) == 0) {
+        "Tidak ada data yang tersedia untuk interpretasi peta."
+      } else {
+        var_values <- map_data_filtered[[input$map_var]]
+        mean_val <- mean(var_values, na.rm = TRUE)
+        high_regions <- sum(var_values > mean_val, na.rm = TRUE)
+        low_regions <- sum(var_values <= mean_val, na.rm = TRUE)
+        q95 <- quantile(var_values, 0.95, na.rm = TRUE)
+        q05 <- quantile(var_values, 0.05, na.rm = TRUE)
+        extreme_high <- sum(var_values >= q95, na.rm = TRUE)
+        extreme_low <- sum(var_values <= q05, na.rm = TRUE)
+        paste0("Peta interaktif menampilkan distribusi spasial variabel ", input$map_var, " di seluruh wilayah Indonesia. ",
+               "Dari ", length(var_values), " wilayah yang dianalisis, ", high_regions, " wilayah memiliki nilai di atas rata-rata (", round(mean_val, 3), "), ",
+               "sedangkan ", low_regions, " wilayah memiliki nilai di bawah rata-rata. ",
+               "Terdapat ", extreme_high, " wilayah dengan nilai sangat tinggi (percentile 95+) dan ", extreme_low, " wilayah dengan nilai sangat rendah (percentile 5-). ",
+               "Pola spasial ini mengindikasikan adanya variasi kerentanan sosial yang signifikan antar wilayah, ",
+               "yang dapat digunakan untuk mengidentifikasi area prioritas dalam program pengurangan kerentanan sosial.")
+      }
+      doc <- officer::read_docx() %>%
+        officer::body_add_par("STATISTIK PETA SOVI", style = "heading 1") %>%
+        officer::body_add_par(interpretation, style = "Normal")
+      print(doc, target = file)
+    }
+  )
 }
 
 # ===============================================================================
