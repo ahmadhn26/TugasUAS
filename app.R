@@ -3937,9 +3937,10 @@ server <- function(input, output, session) {
       filename = function() paste0("hasil_moran_", input$map_var, "_", Sys.Date(), ".docx"),
       content = function(file) {
         result <- moran_calculation()
-        doc <- officer::read_docx() %>%
+        doc <- officer::read_docx()
+        doc <- doc %>%
           officer::body_add_par("HASIL UJI MORAN'S I", style = "heading 1") %>%
-          officer::body_add_par(capture.output(print(result)), style = "Normal")
+          officer::body_add_par(paste(capture.output(print(result)), collapse = "\n"), style = "Normal")
         print(doc, target = file)
       }
     )
@@ -3960,7 +3961,8 @@ server <- function(input, output, session) {
       filename = function() paste0("interpretasi_moran_", input$map_var, "_", Sys.Date(), ".docx"),
       content = function(file) {
         result <- moran_calculation()
-        doc <- officer::read_docx() %>%
+        doc <- officer::read_docx()
+        doc <- doc %>%
           officer::body_add_par("INTERPRETASI MORAN'S I", style = "heading 1") %>%
           officer::body_add_par(output$moran_interpretation(), style = "Normal")
         print(doc, target = file)
@@ -3978,7 +3980,8 @@ server <- function(input, output, session) {
     output$download_normality_interpretation <- downloadHandler(
       filename = function() paste0("interpretasi_normalitas_", input$assumption_var, "_", Sys.Date(), ".docx"),
       content = function(file) {
-        doc <- officer::read_docx() %>%
+        doc <- officer::read_docx()
+        doc <- doc %>%
           officer::body_add_par("INTERPRETASI UJI NORMALITAS", style = "heading 1") %>%
           officer::body_add_par(output$normality_interpretation(), style = "Normal")
         print(doc, target = file)
@@ -3995,7 +3998,8 @@ server <- function(input, output, session) {
     output$download_homogeneity_interpretation <- downloadHandler(
       filename = function() paste0("interpretasi_homogenitas_", input$assumption_var, "_", Sys.Date(), ".docx"),
       content = function(file) {
-        doc <- officer::read_docx() %>%
+        doc <- officer::read_docx()
+        doc <- doc %>%
           officer::body_add_par("INTERPRETASI UJI HOMOGENITAS", style = "heading 1") %>%
           officer::body_add_par(output$homogeneity_interpretation(), style = "Normal")
         print(doc, target = file)
@@ -4013,7 +4017,8 @@ server <- function(input, output, session) {
     output$download_ttest_interpretation <- downloadHandler(
       filename = function() paste0("interpretasi_ttest_", input$t_test_var, "_", Sys.Date(), ".docx"),
       content = function(file) {
-        doc <- officer::read_docx() %>%
+        doc <- officer::read_docx()
+        doc <- doc %>%
           officer::body_add_par("INTERPRETASI UJI T-TEST", style = "heading 1") %>%
           officer::body_add_par(output$t_test_interpretation(), style = "Normal")
         print(doc, target = file)
@@ -4030,7 +4035,8 @@ server <- function(input, output, session) {
     output$download_propvar_interpretation <- downloadHandler(
       filename = function() paste0("interpretasi_propvar_", input$var_test_var, "_", Sys.Date(), ".docx"),
       content = function(file) {
-        doc <- officer::read_docx() %>%
+        doc <- officer::read_docx()
+        doc <- doc %>%
           officer::body_add_par("INTERPRETASI UJI RAGAM", style = "heading 1") %>%
           officer::body_add_par(output$prop_var_interpretation(), style = "Normal")
         print(doc, target = file)
@@ -4047,7 +4053,8 @@ server <- function(input, output, session) {
     output$download_anova_interpretation <- downloadHandler(
       filename = function() paste0("interpretasi_anova_", input$anova_y, "_", Sys.Date(), ".docx"),
       content = function(file) {
-        doc <- officer::read_docx() %>%
+        doc <- officer::read_docx()
+        doc <- doc %>%
           officer::body_add_par("INTERPRETASI ANOVA", style = "heading 1") %>%
           officer::body_add_par(output$anova_interpretation(), style = "Normal")
         print(doc, target = file)
@@ -4065,7 +4072,8 @@ server <- function(input, output, session) {
     output$download_regression_scatter_interpretation <- downloadHandler(
       filename = function() paste0("interpretasi_plot_regresi_", input$reg_y, "_", Sys.Date(), ".docx"),
       content = function(file) {
-        doc <- officer::read_docx() %>%
+        doc <- officer::read_docx()
+        doc <- doc %>%
           officer::body_add_par("INTERPRETASI PLOT REGRESI", style = "heading 1") %>%
           officer::body_add_par(output$regression_plot_interpretation(), style = "Normal")
         print(doc, target = file)
@@ -4082,7 +4090,8 @@ server <- function(input, output, session) {
     output$download_regression_interpretation <- downloadHandler(
       filename = function() paste0("interpretasi_regresi_", input$reg_y, "_", Sys.Date(), ".docx"),
       content = function(file) {
-        doc <- officer::read_docx() %>%
+        doc <- officer::read_docx()
+        doc <- doc %>%
           officer::body_add_par("INTERPRETASI MODEL REGRESI", style = "heading 1") %>%
           officer::body_add_par(output$regression_interpretation(), style = "Normal")
         print(doc, target = file)
