@@ -799,8 +799,12 @@ ui <- dashboardPage(
                   width = 4,
                   class = "custom-box",
                   selectInput("test_type_pv", "Jenis Uji:",
-                              choices = c("Uji Ragam 1 Kelompok" = "var_one",
-                                          "Uji Ragam 2 Kelompok" = "var_two")),  # DIPERBAIKI: Hapus uji proporsi
+                              choices = c(
+                                "Uji Ragam 1 Kelompok" = "var_one",
+                                "Uji Ragam 2 Kelompok" = "var_two",
+                                "Uji Proporsi 1 Kelompok" = "prop_one",
+                                "Uji Proporsi 2 Kelompok" = "prop_two"
+                              )),
                   
                   selectInput("var_test_var", "Variabel Numerik:",
                               choices = names(select_if(sovi_data, is.numeric))),
@@ -867,11 +871,16 @@ ui <- dashboardPage(
                   width = 4,
                   class = "custom-box",
                   selectInput("anova_type", "Jenis ANOVA:",
-                              choices = c("One-Way ANOVA (1 Arah)" = "one_way")),  # DIPERBAIKI: Hanya one-way
+                              choices = c(
+                                "One-Way ANOVA (1 Arah)" = "one_way",
+                                "Two-Way ANOVA (2 Arah)" = "two_way"
+                              )),
                   selectInput("anova_y", "Variabel Dependen (Y):",
                               choices = names(select_if(sovi_data, is.numeric))),
                   selectInput("anova_x1", "Faktor 1 (X1):",
                               choices = c("Tidak ada" = "none")),  # Akan diupdate secara dinamis
+                  selectInput("anova_x2", "Faktor 2 (X2):",
+                              choices = c("Tidak ada" = "none")), // Akan diupdate dinamis
                   numericInput("alpha_anova", "Tingkat Signifikansi (α):", 
                                value = 0.05, min = 0.01, max = 0.1, step = 0.01),
                   br(),
@@ -2837,6 +2846,36 @@ server <- function(input, output, session) {
         }
         
         var.test(group1_data, group2_data, conf.level = 1 - input$alpha_pv)
+      } else if(input$test_type_pv == "prop_one") {
+        # Uji proporsi satu kelompok
+        x <- sum(var_data == input$var_null)
+        n <- length(var_data)
+        p_value <- prop.test(x, n, p = input$prop_null)$p.value
+        list(
+          statistic = x,
+          parameter = n,
+          p.value = p_value,
+          estimate = x / n,
+          null.value = input$prop_null,
+          method = "One-sample proportion test",
+          data.name = input$var_test_var
+        )
+      } else if(input$test_type_pv == "prop_two") {
+        # Uji proporsi dua kelompok
+        x1 <- sum(var_data == input$prop_null)
+        n1 <- length(var_data)
+        x2 <- sum(var_data == input$prop_null)
+        n2 <- length(var_data)
+        p_value <- prop.test(c(x1, x2), c(n1, n2))$p.value
+        list(
+          statistic = c(x1, x2),
+          parameter = c(n1, n2),
+          p.value = p_value,
+          estimate = c(x1 / n1, x2 / n2),
+          null.value = input$prop_null,
+          method = "Two-sample proportion test",
+          data.name = input$var_test_var
+        )
       }
     }, error = function(e) {
       list(error = paste("Error dalam uji ragam:", e$message))
@@ -2892,6 +2931,16 @@ server <- function(input, output, session) {
           par(mfrow = c(1, 1))
         }
       }
+    } else if(input$test_type_pv == "prop_one") {
+      barplot(table(var_data), main = paste("Distribusi", input$var_test_var),
+              xlab = "Kategori", ylab = "Frekuensi", col = "lightblue")
+      abline(h = input$prop_null, col = "red", lwd = 2, lty = 2)
+      legend("topright", paste("Proporsi H₀:", input$prop_null), col = "red", lwd = 2)
+    } else if(input$test_type_pv == "prop_two") {
+      barplot(table(var_data), main = paste("Distribusi", input$var_test_var),
+              xlab = "Kategori", ylab = "Frekuensi", col = "lightblue")
+      abline(h = input$prop_null, col = "red", lwd = 2, lty = 2)
+      legend("topright", paste("Proporsi H₀:", input$prop_null), col = "red", lwd = 2)
     }
   })
   
@@ -2950,6 +2999,48 @@ server <- function(input, output, session) {
         stringsAsFactors = FALSE
       )
     } else if(input$test_type_pv == "var_two") {
+      if(input$group_var_var != "none" && input$group_var_var %in% names(categorical_vars$data)) {
+        group_data <- categorical_vars$data[[input$group_var_var]]
+        complete_cases <- !is.na(var_data) & !is.na(group_data)
+        var_clean <- var_data[complete_cases]
+        group_clean <- group_data[complete_cases]
+        
+        group_summary <- aggregate(var_clean, by = list(Group = group_clean), 
+                                   FUN = function(x) c(
+                                     N = length(x),
+                                     Mean = round(mean(x), 4),
+                                     Variance = round(var(x), 4),
+                                     SD = round(sd(x), 4),
+                                     Min = round(min(x), 4),
+                                     Max = round(max(x), 4)
+                                   ))
+        
+        summary_df <- data.frame(
+          "Kelompok" = group_summary$Group,
+          "N" = group_summary$x[, "N"],
+          "Mean" = group_summary$x[, "Mean"],
+          "Variance" = group_summary$x[, "Variance"],
+          "Std_Dev" = group_summary$x[, "SD"],
+          "Min" = group_summary$x[, "Min"],
+          "Max" = group_summary$x[, "Max"],
+          stringsAsFactors = FALSE
+        )
+      } else {
+        summary_df <- data.frame(Pesan = "Pilih variabel kelompok yang valid")
+      }
+    } else if(input$test_type_pv == "prop_one") {
+      summary_df <- data.frame(
+        "Statistik" = c("N", "Proporsi", "Std Dev", "Min", "Max"),
+        "Nilai" = c(
+          length(var_data[!is.na(var_data)]),
+          round(mean(var_data == input$prop_null), 4),
+          round(sd(var_data == input$prop_null), 4),
+          round(min(var_data == input$prop_null), 4),
+          round(max(var_data == input$prop_null), 4)
+        ),
+        stringsAsFactors = FALSE
+      )
+    } else if(input$test_type_pv == "prop_two") {
       if(input$group_var_var != "none" && input$group_var_var %in% names(categorical_vars$data)) {
         group_data <- categorical_vars$data[[input$group_var_var]]
         complete_cases <- !is.na(var_data) & !is.na(group_data)
@@ -3050,49 +3141,69 @@ server <- function(input, output, session) {
   # =====================================================================
   
   anova_result <- reactive({
-    req(input$anova_y, input$anova_x1)
-    
+    req(input$anova_y, input$anova_x1, input$anova_type)
     if(input$anova_x1 == "none" || !input$anova_x1 %in% names(categorical_vars$data)) {
-      return(list(error = "Pilih variabel faktor yang valid dari hasil kategorisasi."))
+      return(list(error = "Pilih variabel faktor 1 yang valid dari hasil kategorisasi."))
     }
-    
     y_data <- sovi_data[[input$anova_y]]
     x1_data <- categorical_vars$data[[input$anova_x1]]
-    
     complete_cases <- !is.na(y_data) & !is.na(x1_data)
     y_clean <- y_data[complete_cases]
     x1_clean <- x1_data[complete_cases]
-    
-    if(length(y_clean) < 3) {
-      return(list(error = "Data tidak mencukupi untuk ANOVA (minimal 3 observasi)."))
-    }
-    
-    group_counts <- table(x1_clean)
-    if(any(group_counts < 2)) {
-      return(list(error = "Setiap kelompok harus memiliki minimal 2 observasi."))
-    }
-    
-    if(length(unique(x1_clean)) < 2) {
-      return(list(error = "Variabel faktor harus memiliki minimal 2 kategori."))
-    }
-    
-    tryCatch({
-      anova_data <- data.frame(y = y_clean, x1 = as.factor(x1_clean))
-      
-      if(input$anova_type == "one_way") {
-        model <- aov(y ~ x1, data = anova_data)
+    if(input$anova_type == "two_way") {
+      if(is.null(input$anova_x2) || input$anova_x2 == "none" || !input$anova_x2 %in% names(categorical_vars$data)) {
+        return(list(error = "Pilih variabel faktor 2 yang valid dari hasil kategorisasi."))
+      }
+      x2_data <- categorical_vars$data[[input$anova_x2]][complete_cases]
+      if(length(y_clean) < 4) {
+        return(list(error = "Data tidak mencukupi untuk Two-Way ANOVA (minimal 4 observasi)."))
+      }
+      group_counts <- table(x1_clean, x2_data)
+      if(any(group_counts < 2)) {
+        return(list(error = "Setiap kombinasi kelompok harus memiliki minimal 2 observasi."))
+      }
+      tryCatch({
+        anova_data <- data.frame(y = y_clean, x1 = as.factor(x1_clean), x2 = as.factor(x2_data))
+        model <- aov(y ~ x1 * x2, data = anova_data)
         anova_summary <- summary(model)
-        
         list(
           model = model,
           summary = anova_summary,
           data = anova_data,
-          type = "one_way"
+          type = "two_way"
         )
+      }, error = function(e) {
+        list(error = paste("Error dalam Two-Way ANOVA:", e$message))
+      })
+    } else {
+      if(length(y_clean) < 3) {
+        return(list(error = "Data tidak mencukupi untuk ANOVA (minimal 3 observasi)."))
       }
-    }, error = function(e) {
-      list(error = paste("Error dalam ANOVA:", e$message))
-    })
+      group_counts <- table(x1_clean)
+      if(any(group_counts < 2)) {
+        return(list(error = "Setiap kelompok harus memiliki minimal 2 observasi."))
+      }
+      if(length(unique(x1_clean)) < 2) {
+        return(list(error = "Variabel faktor harus memiliki minimal 2 kategori."))
+      }
+      tryCatch({
+        anova_data <- data.frame(y = y_clean, x1 = as.factor(x1_clean))
+        
+        if(input$anova_type == "one_way") {
+          model <- aov(y ~ x1, data = anova_data)
+          anova_summary <- summary(model)
+          
+          list(
+            model = model,
+            summary = anova_summary,
+            data = anova_data,
+            type = "one_way"
+          )
+        }
+      }, error = function(e) {
+        list(error = paste("Error dalam ANOVA:", e$message))
+      })
+    }
   })
   
   output$anova_result <- renderPrint({
@@ -3109,20 +3220,14 @@ server <- function(input, output, session) {
   output$anova_plot <- renderPlot({
     result <- anova_result()
     if(is.null(result) || "error" %in% names(result)) return(NULL)
-    
     if(result$type == "one_way") {
       par(mfrow = c(2, 2))
-      
-      # Boxplot
       boxplot(y ~ x1, data = result$data,
               main = paste("Boxplot", input$anova_y, "by", input$anova_x1),
               xlab = input$anova_x1, ylab = input$anova_y,
               col = rainbow(length(unique(result$data$x1))))
-      
-      # Means plot
       group_means <- tapply(result$data$y, result$data$x1, mean)
       group_se <- tapply(result$data$y, result$data$x1, function(x) sd(x)/sqrt(length(x)))
-      
       plot(1:length(group_means), group_means, 
            main = "Group Means with Error Bars",
            xlab = "Groups", ylab = "Mean",
@@ -3133,18 +3238,24 @@ server <- function(input, output, session) {
              1:length(group_means), group_means + group_se,
              angle = 90, code = 3, length = 0.1)
       axis(1, at = 1:length(group_means), labels = names(group_means))
-      
-      # Residuals plot
       plot(fitted(result$model), residuals(result$model),
            main = "Residuals vs Fitted",
            xlab = "Fitted Values", ylab = "Residuals",
            pch = 19, col = "red")
       abline(h = 0, lty = 2)
-      
-      # Q-Q plot of residuals
       qqnorm(residuals(result$model), main = "Q-Q Plot of Residuals")
       qqline(residuals(result$model), col = "red")
-      
+      par(mfrow = c(1, 1))
+    } else if(result$type == "two_way") {
+      par(mfrow = c(1, 2))
+      interaction.plot(result$data$x1, result$data$x2, result$data$y,
+                      main = paste("Interaction Plot", input$anova_x1, "x", input$anova_x2),
+                      xlab = input$anova_x1, trace.label = input$anova_x2, ylab = input$anova_y,
+                      col = rainbow(length(unique(result$data$x2))))
+      boxplot(y ~ x1 * x2, data = result$data,
+              main = paste("Boxplot", input$anova_y, "by", input$anova_x1, "and", input$anova_x2),
+              xlab = paste(input$anova_x1, ":", input$anova_x2), ylab = input$anova_y,
+              col = rainbow(length(unique(result$data$x1) * length(unique(result$data$x2)))))
       par(mfrow = c(1, 1))
     }
   })
@@ -3154,40 +3265,54 @@ server <- function(input, output, session) {
     if(is.null(result) || "error" %in% names(result)) {
       return("Tidak dapat memberikan interpretasi karena error dalam perhitungan atau parameter tidak valid.")
     }
-    
-    f_stat <- result$summary[[1]]$`F value`[1]
-    p_value <- result$summary[[1]]$`Pr(>F)`[1]
-    
-    var_context <- switch(input$anova_y,
-                          "POVERTY" = "tingkat kemiskinan",
-                          "SOVI_SCORE" = "skor kerentanan sosial",
-                          "CHILDREN" = "persentase anak-anak",
-                          paste("indikator", tolower(input$anova_y)))
-    
-    factor_context <- switch(input$anova_x1,
-                             paste("kategori", gsub("_CAT$", "", input$anova_x1)))
-    
-    base_interpretation <- paste0("ANOVA satu arah untuk ", var_context, " berdasarkan ", factor_context, 
-                                  " menghasilkan statistik F = ", round(f_stat, 4), 
-                                  " dengan p-value = ", round(p_value, 4), ". ")
-    
-    significance_interpretation <- if(p_value < input$alpha_anova) {
-      paste0("Hasil signifikan menunjukkan bahwa terdapat perbedaan rata-rata ", var_context, 
-             " yang signifikan antar ", factor_context, ". Hal ini mengindikasikan bahwa ", 
-             factor_context, " berpengaruh terhadap ", var_context, " dalam konteks kerentanan sosial.")
-    } else {
-      paste0("Hasil tidak signifikan menunjukkan bahwa tidak terdapat perbedaan rata-rata ", var_context, 
-             " yang signifikan antar ", factor_context, ". Hal ini mengindikasikan bahwa ", 
-             var_context, " relatif homogen antar ", factor_context, ".")
+    if(result$type == "one_way") {
+      f_stat <- result$summary[[1]]$`F value`[1]
+      p_value <- result$summary[[1]]$`Pr(>F)`[1]
+      var_context <- switch(input$anova_y,
+                            "POVERTY" = "tingkat kemiskinan",
+                            "SOVI_SCORE" = "skor kerentanan sosial",
+                            "CHILDREN" = "persentase anak-anak",
+                            paste("indikator", tolower(input$anova_y)))
+      factor_context <- switch(input$anova_x1,
+                               paste("kategori", gsub("_CAT$", "", input$anova_x1)))
+      base_interpretation <- paste0("ANOVA satu arah untuk ", var_context, " berdasarkan ", factor_context, 
+                                    " menghasilkan statistik F = ", round(f_stat, 4), 
+                                    " dengan p-value = ", round(p_value, 4), ". ")
+      significance_interpretation <- if(p_value < input$alpha_anova) {
+        paste0("Hasil signifikan menunjukkan bahwa terdapat perbedaan rata-rata ", var_context, 
+               " yang signifikan antar ", factor_context, ". Hal ini mengindikasikan bahwa ", 
+               factor_context, " berpengaruh terhadap ", var_context, " dalam konteks kerentanan sosial.")
+      } else {
+        paste0("Hasil tidak signifikan menunjukkan bahwa tidak terdapat perbedaan rata-rata ", var_context, 
+               " yang signifikan antar ", factor_context, ".")
+      }
+      paste0(base_interpretation, significance_interpretation)
+    } else if(result$type == "two_way") {
+      # Interpretasi untuk two-way ANOVA
+      f_stat1 <- result$summary[[1]]$`F value`[1]
+      p_value1 <- result$summary[[1]]$`Pr(>F)`[1]
+      f_stat2 <- result$summary[[1]]$`F value`[2]
+      p_value2 <- result$summary[[1]]$`Pr(>F)`[2]
+      f_stat_inter <- result$summary[[1]]$`F value`[3]
+      p_value_inter <- result$summary[[1]]$`Pr(>F)`[3]
+      var_context <- switch(input$anova_y,
+                            "POVERTY" = "tingkat kemiskinan",
+                            "SOVI_SCORE" = "skor kerentanan sosial",
+                            "CHILDREN" = "persentase anak-anak",
+                            paste("indikator", tolower(input$anova_y)))
+      factor1_context <- switch(input$anova_x1,
+                               paste("kategori", gsub("_CAT$", "", input$anova_x1)))
+      factor2_context <- switch(input$anova_x2,
+                               paste("kategori", gsub("_CAT$", "", input$anova_x2)))
+      base_interpretation <- paste0("Two-Way ANOVA untuk ", var_context, " berdasarkan ", factor1_context, " dan ", factor2_context, ". ")
+      signif1 <- if(p_value1 < input$alpha_anova) "signifikan" else "tidak signifikan"
+      signif2 <- if(p_value2 < input$alpha_anova) "signifikan" else "tidak signifikan"
+      signif_inter <- if(p_value_inter < input$alpha_anova) "signifikan" else "tidak signifikan"
+      paste0(base_interpretation,
+             "Faktor 1 (", factor1_context, "): F = ", round(f_stat1, 4), ", p-value = ", round(p_value1, 4), " (", signif1, "). ",
+             "Faktor 2 (", factor2_context, "): F = ", round(f_stat2, 4), ", p-value = ", round(p_value2, 4), " (", signif2, "). ",
+             "Interaksi: F = ", round(f_stat_inter, 4), ", p-value = ", round(p_value_inter, 4), " (", signif_inter, ").")
     }
-    
-    practical_implication <- if(p_value < input$alpha_anova) {
-      " Perbedaan yang signifikan ini menunjukkan perlunya strategi intervensi yang berbeda untuk setiap kategori dalam upaya mengurangi kerentanan sosial."
-    } else {
-      " Kondisi yang homogen ini menunjukkan bahwa strategi intervensi dapat diterapkan secara seragam tanpa perlu diferensiasi berdasarkan kategori ini."
-    }
-    
-    paste0(base_interpretation, significance_interpretation, practical_implication)
   })
   
   # Post-hoc test
