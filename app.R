@@ -1,5 +1,5 @@
 # ===============================================================================
-# DASHBOARD ANALITIKA SOVI NUSANTARA - VERSI DIPERBAIKI
+# DASHBOARD ANALITIKA SOVI NUSANTARA - VERSI DIPERBAIKI + SLM
 # ===============================================================================
 # Dashboard R Shiny untuk Analisis Komprehensif Data Social Vulnerability Index
 # Nama Unik: "SOVI-STAT EXPLORER: Dashboard Analitika Kerentanan Sosial Indonesia"
@@ -29,157 +29,101 @@ library(mapview)
 library(RColorBrewer)
 library(mapview)
 library(spdep)
-
-
+library(spatialreg)
 
 
 
 
 # ===============================================================================
-# 2. PEMUATAN DAN PERSIAPAN DATA - DIPERBAIKI
+# 2. PEMUATAN DATA BERSIH (CLEAN DATA LOADING)
 # ===============================================================================
 
-# Fungsi untuk memuat data dengan penanganan error
-load_data <- function() {
-  tryCatch({
-    # Coba muat data dari file lokal
-    sovi_data <- read.csv("data/sovi_data.csv", stringsAsFactors = FALSE)
-    distance_data <- read.csv("data/distance.csv", stringsAsFactors = FALSE)
-    
-    
-    
-    list(
-      sovi = sovi_data,
-      distance = distance_data,
-      status = "success",
-      message = "Data berhasil dimuat dari file lokal"
-    )
-  }, error = function(e) {
-    # Jika gagal, buat data dummy berdasarkan struktur asli TANPA variabel tambahan
-    set.seed(123)
-    n <- 511  # Sesuai dengan data asli
-    
-    # Buat data dummy HANYA dengan variabel yang ada di dataset asli
-    sovi_dummy <- data.frame(
-      DISTRICTCODE = 1101:(1100 + n),
-      CHILDREN = round(runif(n, 5, 20), 2),
-      FEMALE = round(runif(n, 45, 55), 2),
-      ELDERLY = round(runif(n, 1, 8), 2),
-      FHEAD = round(runif(n, 10, 30), 2),
-      FAMILYSIZE = round(runif(n, 3, 6), 2),
-      NOELECTRIC = round(runif(n, 0, 5), 2),
-      LOWEDU = round(runif(n, 15, 40), 2),
-      GROWTH = round(runif(n, 0.5, 3), 2),
-      POVERTY = round(runif(n, 5, 35), 2),
-      ILLITERATE = round(runif(n, 2, 15), 2),
-      NOTRAINING = round(runif(n, 85, 99), 2),
-      DPRONE = round(runif(n, 30, 95), 2),
-      RENTED = round(runif(n, 2, 10), 2),
-      NOSEWER = round(runif(n, 10, 50), 2),
-      TAPWATER = round(runif(n, 3, 25), 2),
-      POPULATION = round(runif(n, 50000, 500000)),
-      stringsAsFactors = FALSE
-    )
-    
-    # Hitung SOVI Score berdasarkan variabel lain
-    sovi_dummy$SOVI_SCORE <- with(sovi_dummy, 
-                                  0.2 * (POVERTY/100) + 0.15 * (ILLITERATE/100) + 0.1 * (NOELECTRIC/100) + 
-                                    0.1 * (LOWEDU/100) + 0.15 * (CHILDREN/100) + 0.1 * (ELDERLY/100) + 
-                                    0.1 * (FHEAD/100) + 0.1 * (NOSEWER/100) + rnorm(n, 0, 0.05))
-    sovi_dummy$SOVI_SCORE <- pmax(0.1, pmin(0.9, sovi_dummy$SOVI_SCORE))
-    
-    # Buat matriks jarak berdasarkan data asli
-    distance_dummy <- matrix(runif(n*n, 0, 1000), nrow = n, ncol = n)
-    diag(distance_dummy) <- 0
-    # Buat simetris
-    distance_dummy[lower.tri(distance_dummy)] <- t(distance_dummy)[lower.tri(distance_dummy)]
-    colnames(distance_dummy) <- paste0("DIST_", 1:n)
-    rownames(distance_dummy) <- paste0("DIST_", 1:n)
-    distance_dummy <- as.data.frame(distance_dummy)
-    
-    list(
-      sovi = sovi_dummy,
-      distance = distance_dummy,
-      status = "dummy",
-      message = "File data tidak ditemukan. Menggunakan data dummy berdasarkan struktur asli untuk demonstrasi."
-    )
-  })
-}
-
-# Fungsi ini sekarang hanya bertugas memuat file, tidak lebih.
-# HANYA MEMBACA FILE, TIDAK LEBIH
-load_spatial_data <- function() {
-  tryCatch({
-    spatial_data <- st_read("data/peta_sovi_sederhana.gpkg", quiet = TRUE)
-    list(spatial = spatial_data, status = "success", message = "Data spasial berhasil dimuat")
-  }, error = function(e) {
-    list(spatial = NULL, status = "error", message = paste("Gagal memuat data spasial:", e$message))
-  })
-}
-
-# ===============================================================================
-# PEMUATAN DAN PENGGABUNGAN DATA - VERSI PERBAIKAN FINAL
-# ===============================================================================
-
-# 1. Muat data non-spasial (dari sovi_data.csv)
-data_result <- load_data()
-sovi_data <- data_result$sovi
-distance_data <- data_result$distance
-
-# 2. Buat atau muat Matriks Bobot Spasial
-weights_rds_path <- "data/spatial_weights_from_distance.rds"
-if (file.exists(weights_rds_path)) {
-  spatial_weights <- readRDS(weights_rds_path)
-  print("Matriks bobot spasial berhasil dimuat dari file .rds.")
-} else {
-  print("File .rds tidak ditemukan. Membuat matriks bobot spasial dari distance.csv...")
-  if (exists("distance_data") && is.data.frame(distance_data)) {
-    dist_matrix_full <- as.matrix(distance_data[, -1])
-    inv_dist_matrix <- 1 / (dist_matrix_full + 1e-9)
-    diag(inv_dist_matrix) <- 0
-    spatial_weights <- mat2listw(inv_dist_matrix, style = "W")
-    saveRDS(spatial_weights, file = weights_rds_path)
-    print(paste("Matriks bobot spasial telah dibuat dan disimpan di:", weights_rds_path))
-  } else {
-    stop("Data 'distance.csv' tidak dapat dimuat atau tidak valid untuk membuat matriks bobot.")
-  }
-}
-# Simpan matriks jarak mentah untuk nanti
-dist_matrix_raw <- as.matrix(distance_data[, -1])
-
-# 3. Muat data spasial MENTAH
-spatial_result <- load_spatial_data()
-spatial_data_raw <- spatial_result$spatial
-
-# 4. Lakukan RENAME dengan nama kolom yang sudah kita pastikan dari konsol
-spatial_data_renamed <- spatial_data_raw %>%
-  rename(
-    DISTRICTCODE = KODE_BERSIH,
-    DISTRICT_NAME = WADMKK,
-    PROVINCE_NAME = WADMPR
+# --- Blok tryCatch untuk memuat data berundsih atau data dummy jika gagal ---
+data_load_result <- tryCatch({
+  
+  # 1. Muat data spasial master yang sudah bersih (479 baris)
+  spatial_data <- st_read("data/data_master_clean2.gpkg", quiet = TRUE)
+  
+  # 2. Muat matriks jarak yang sudah bersih (479x479)
+  dist_matrix_raw <- readRDS("data/distance_matrix_clean1.rds")
+  
+  # 3. Buat versi non-spasial untuk analisis statistik (tabel biasa)
+  sovi_data <- st_drop_geometry(spatial_data)
+  
+  # 4. Beri pesan sukses
+  list(
+    spatial_data = spatial_data,
+    sovi_data = sovi_data,
+    dist_matrix_raw = dist_matrix_raw,
+    status = "clean",
+    message = "Data bersih yang telah disinkronkan berhasil dimuat."
   )
+  
+}, error = function(e) {
+  # Jika file bersih tidak ditemukan, buat data dummy untuk demonstrasi
+  warning("File data bersih tidak ditemukan. Memuat data dummy. Pesan error: ", e$message)
+  set.seed(123)
+  n <- 479 # Sesuaikan dengan jumlah data bersih
+  
+  sovi_dummy <- data.frame(
+    DISTRICTCODE = 1101:(1100 + n),
+    CHILDREN = round(runif(n, 5, 20), 2),
+    FEMALE = round(runif(n, 45, 55), 2),
+    ELDERLY = round(runif(n, 1, 8), 2),
+    FHEAD = round(runif(n, 10, 30), 2),
+    FAMILYSIZE = round(runif(n, 3, 6), 2),
+    NOELECTRIC = round(runif(n, 0, 5), 2),
+    LOWEDU = round(runif(n, 15, 40), 2),
+    GROWTH = round(runif(n, 0.5, 3), 2),
+    POVERTY = round(runif(n, 5, 35), 2),
+    ILLITERATE = round(runif(n, 2, 15), 2),
+    NOTRAINING = round(runif(n, 85, 99), 2),
+    DPRONE = round(runif(n, 30, 95), 2),
+    RENTED = round(runif(n, 2, 10), 2),
+    NOSEWER = round(runif(n, 10, 50), 2),
+    TAPWATER = round(runif(n, 3, 25), 2),
+    POPULATION = round(runif(n, 50000, 500000)),
+    SOVI_SCORE = round(runif(n, 0.1, 0.9), 2),
+    WADMKK = paste("Kabupaten Dummy", 1:n),
+    WADMPR = "Provinsi Dummy",
+    KODE_BERSIH = 1101:(1100 + n),
+    stringsAsFactors = FALSE
+  )
+  
+  distance_dummy <- matrix(runif(n*n, 0, 1000), nrow = n, ncol = n)
+  diag(distance_dummy) <- 0
+  
+  list(
+    spatial_data = NULL, # Tidak ada data spasial untuk mode dummy
+    sovi_data = sovi_dummy,
+    dist_matrix_raw = distance_dummy,
+    status = "dummy",
+    message = "File data bersih tidak ditemukan. Menggunakan data dummy untuk demonstrasi."
+  )
+})
 
-# --- LANGKAH PENGGABUNGAN ---
+# --- Menetapkan variabel final dari hasil pemuatan data ---
+spatial_data    <- data_load_result$spatial_data
+sovi_data       <- data_load_result$sovi_data
+dist_matrix_raw <- data_load_result$dist_matrix_raw
+data_result     <- list(status = data_load_result$status, message = data_load_result$message)
 
-# 5. Ambil kolom kunci dan geometri yang dibutuhkan
-spatial_data_geom_clean <- spatial_data_renamed %>%
-  select(DISTRICTCODE, DISTRICT_NAME, PROVINCE_NAME, geom)
+# Buat daftar pilihan peta dari data spasial yang SUDAH dimuat
+# Pastikan data spasial ada sebelum membuat pilihan
+if (!is.null(spatial_data)) {
+  pilihan_peta_numerik <- names(spatial_data)[sapply(st_drop_geometry(spatial_data), is.numeric)]
+} else {
+  pilihan_peta_numerik <- names(sovi_data)[sapply(sovi_data, is.numeric)]
+}
 
-# 6. Pastikan tipe data kolom kunci sama
-sovi_data$DISTRICTCODE <- as.character(sovi_data$DISTRICTCODE)
-spatial_data_geom_clean$DISTRICTCODE <- as.character(spatial_data_geom_clean$DISTRICTCODE)
-
-# 7. Gabungkan geometri dengan atribut dari sovi_data
-spatial_data <- left_join(spatial_data_geom_clean, sovi_data, by = "DISTRICTCODE")
-
-# --- AKHIR DARI PENGGABUNGAN ---
+# Membuat matriks bobot spasial dari matriks jarak yang sudah bersih
+# Ini akan digunakan untuk Moran's I
+inv_dist_matrix <- 1 / (dist_matrix_raw + 1e-9)
+diag(inv_dist_matrix) <- 0
+spatial_weights <- mat2listw(inv_dist_matrix, style = "W")
 
 
-# Buat daftar pilihan peta dari data yang SUDAH digabung
-pilihan_peta_numerik <- names(spatial_data)[sapply(st_drop_geometry(spatial_data), is.numeric)]
 
-# HAPUS BARIS INI KARENA SUDAH DITANGANI DI ATAS
-# spatial_weights <- readRDS("data/spatial_weights_from_distance.rds")
 
 # Metadata variabel berdasarkan struktur asli
 metadata <- data.frame(
@@ -226,7 +170,7 @@ ui <- dashboardPage(
       menuItem("🔍 Eksplorasi Data", tabName = "eksplorasi", icon = icon("chart-pie"),
                menuSubItem("Statistik Deskriptif", tabName = "deskriptif", icon = icon("table")),
                menuSubItem("Visualisasi & Grafik", tabName = "visualisasi", icon = icon("chart-bar")),
-               menuSubItem("Analisis Spasial", tabName = "spatial", icon = icon("project-diagram"))  # DIGANTI dari peta
+               menuSubItem("Analisis Spasial", tabName = "spatial", icon = icon("project-diagram"))  
       ),
       menuItem("✅ Uji Asumsi Data", tabName = "asumsi", icon = icon("tasks")),
       menuItem("📈 Statistik Inferensia", icon = icon("calculator"),
@@ -302,16 +246,15 @@ ui <- dashboardPage(
     conditionalPanel(
       condition = "true",
       div(
-        style = if(data_result$status == "dummy") {
+        style = if(data_result$status == "dummy" || data_load_result$status == "dummy") { # Sedikit modifikasi untuk dummy mode
           "background: linear-gradient(135deg, #ffeaa7 0%, #fab1a0 100%); border: 2px solid #fdcb6e; padding: 15px; margin: 15px; border-radius: 10px; color: #2d3436;"
         } else {
           "background: linear-gradient(135deg, #00b894 0%, #00cec9 100%); border: 2px solid #00b894; padding: 15px; margin: 15px; border-radius: 10px; color: white;"
         },
-        icon(if(data_result$status == "dummy") "exclamation-triangle" else "check-circle", class = "fa-2x"),
-        h4(style = "margin: 10px 0;", if(data_result$status == "dummy") "Mode Demonstrasi" else "Data Berhasil Dimuat"),
-        p(data_result$message, style = "margin: 0; font-size: 14px;"),
-        p(paste("Status Data Spasial:", spatial_result$status), style = "margin: 5px 0; font-size: 12px;"),
-        p(spatial_result$message, style = "margin: 0; font-size: 12px;")
+        icon(if(data_result$status == "dummy" || data_load_result$status == "dummy") "exclamation-triangle" else "check-circle", class = "fa-2x"),
+        h4(style = "margin: 10px 0;", if(data_result$status == "dummy" || data_load_result$status == "dummy") "Mode Demonstrasi" else "Data Berhasil Dimuat"),
+        p(data_result$message, style = "margin: 0; font-size: 14px;")
+        # Dua baris yang merujuk ke 'spatial_result' sudah dihapus
       )
     ),
     
@@ -606,7 +549,10 @@ ui <- dashboardPage(
       # =====================================================================
       # TAB PETA INTERAKTIF - FITUR EKSPLORASI DATA
       # =====================================================================
+      
       tabItem(tabName = "spatial",
+              
+              # --- BARIS 1: PETA INTERAKTIF ---
               fluidRow(
                 box(
                   title = "🗺️ Kontrol Peta Interaktif",
@@ -627,25 +573,114 @@ ui <- dashboardPage(
                 )
               ),
               
-              # Baris baru untuk Analisis
+              # --- BARIS 2: ANALISIS MORAN'S I ---
               fluidRow(
                 box(
                   title = "🔬 Analisis Autokorelasi Spasial (Moran's I)",
                   status = "success", solidHeader = TRUE, width = 12, class = "custom-box",
                   
-                  # Tombol untuk menjalankan analisis
-                  actionButton("run_moran", "Jalankan Uji Moran's I pada Variabel Terpilih", icon = icon("calculator"), class = "btn-success"),
-                  
-                  hr(), # Garis pemisah
-                  
-                  # Tempat untuk menampilkan hasil
+                  actionButton("run_moran", "Jalankan Uji Moran's I", icon = icon("calculator"), class = "btn-success"),
+                  hr(),
                   verbatimTextOutput("moran_test_result"),
-                  
-                  # Tempat untuk interpretasi
                   div(class = "interpretation-box",
                       h4("📊 Interpretasi Hasil Uji Moran's I"),
                       textOutput("moran_interpretation")
+                  ),
+                  
+                  # Tombol Download untuk Moran's I
+                  div(class = "download-section",
+                      downloadButton("download_moran_report", "Download Laporan Moran's I (Word)", class = "btn-primary")
                   )
+                )
+              ),
+              
+              # --- BARIS 3: ANALISIS CLUSTERING ---
+              fluidRow(
+                box(
+                  title = "🔬 Analisis Clustering (K-Means)",
+                  status = "purple", solidHeader = TRUE, width = 12, class = "custom-box",
+                  
+                  column(
+                    width = 4,
+                    h4("Pengaturan Clustering", style = "margin-top: 0;"),
+                    selectizeInput("cluster_vars", "Pilih Variabel untuk Clustering:", choices = NULL, multiple = TRUE),
+                    numericInput("cluster_k", "Jumlah Klaster (K):", value = 4, min = 2, max = 10),
+                    actionButton("run_cluster", "🚀 Jalankan Analisis Klaster", icon = icon("cogs"), class = "btn-success"),
+                    div(class = "interpretation-box", style = "margin-top: 20px;",
+                        h4("💡 Interpretasi Klaster"),
+                        textOutput("cluster_interpretation_text")
+                    )
+                  ),
+                  
+                  column(
+                    width = 8,
+                    h4("Peta Hasil Clustering", style = "margin-top: 0;"),
+                    leafletOutput("cluster_map", height = "550px"),
+                    
+                    br(),
+                    h4("Ringkasan Karakteristik Klaster"),
+                    DT::dataTableOutput("cluster_summary_table"),
+                    
+                    # Tombol Download untuk Clustering
+                    div(class = "download-section",
+                        h5("Download Hasil Clustering", style="margin-top:0;"),
+                        downloadButton("download_cluster_map_jpg", "Peta Klaster (JPG)", class="btn-warning"),
+                        downloadButton("download_cluster_report", "Laporan Klaster (Word)", class="btn-primary")
+                    )
+                  )
+                )
+              ),
+              
+              # --- [PENAMBAHAN SLM] --- BARIS 4: ANALISIS SPATIAL LAG MODEL (SLM) ---
+              fluidRow(
+                box(
+                  title = "📈 Analisis Spatial Lag Model (SLM)",
+                  status = "danger", solidHeader = TRUE, width = 12, class = "custom-box",
+                  
+                  # --- Kolom Kiri untuk Input ---
+                  column(
+                    width = 4,
+                    h4("Pengaturan Model SLM"),
+                    p("Gunakan model ini untuk melihat pengaruh variabel independen (X) terhadap dependen (Y) dengan memperhitungkan efek spasial."),
+                    
+                    selectInput("slm_y", "Pilih Variabel Dependen (Y):",
+                                choices = pilihan_peta_numerik,
+                                selected = "POVERTY"),
+                    
+                    selectizeInput("slm_x", "Pilih Variabel Independen (X):",
+                                   choices = pilihan_peta_numerik,
+                                   selected = c("LOWEDU", "NOELECTRIC"),
+                                   multiple = TRUE),
+                    
+                    actionButton("run_slm", "Jalankan Model SLM", icon = icon("rocket"), class = "btn-danger"),
+                    
+                    br(),br(),
+                    div(class = "download-section",
+                        downloadButton("download_slm_report", "Download Laporan SLM (Word)", class = "btn-primary")
+                    )
+                  ),
+                  
+                  # --- Kolom Kanan untuk Output ---
+                  column(
+                    width = 8,
+                    h4("Ringkasan Hasil Model SLM"),
+                    verbatimTextOutput("slm_summary"),
+                    
+                    div(class = "interpretation-box",
+                        h4("🔍 Interpretasi Hasil SLM"),
+                        textOutput("slm_interpretation")
+                    )
+                  )
+                )
+              ),
+              
+              # --- BARIS 4: DOWNLOAD GABUNGAN ---
+              fluidRow(
+                box(
+                  title = "📥 Download Laporan Gabungan",
+                  status = "danger", solidHeader = TRUE, width = 12, class = "custom-box",
+                  p("Download seluruh hasil analisis di halaman ini (Moran's I dan Clustering) dalam satu dokumen Word."),
+                  downloadButton("download_spatial_full_report", "Download Laporan Lengkap Analisis Spasial (Word)", class = "btn-danger")
                 )
               )
       ),
@@ -655,25 +690,34 @@ ui <- dashboardPage(
       # =====================================================================
       tabItem(tabName = "asumsi",
               fluidRow(
+                
                 box(
-                  title = "⚙️ Kontrol Uji Asumsi", 
-                  status = "primary", 
+                  title = "⚙️ Kontrol Uji Asumsi",
+                  status = "primary",
                   solidHeader = TRUE,
                   width = 4,
                   class = "custom-box",
+                  
                   selectInput("assumption_var", "Pilih Variabel untuk Uji Normalitas:",
                               choices = names(select_if(sovi_data, is.numeric))),
-                  # DIPERBAIKI: Hanya gunakan variabel kategori yang dibuat dari manajemen data
+                  
                   selectInput("group_var", "Pilih Variabel Kelompok untuk Uji Homogenitas:",
-                              choices = c("Tidak ada" = "none")),  # Akan diupdate secara dinamis
-                  numericInput("alpha_level", "Tingkat Signifikansi (α):", 
+                              choices = c("Tidak ada" = "none")),
+                  
+                  numericInput("alpha_level", "Tingkat Signifikansi (α):",
                                value = 0.05, min = 0.01, max = 0.1, step = 0.01),
                   br(),
+                  
+                  # --- BAGIAN DOWNLOAD BARU ---
                   div(
                     class = "download-section",
-                    h5("📥 Download", style = "margin-top: 0;"),
-                    downloadButton("download_assumptions", "📄 Laporan Uji Asumsi (Word)", 
-                                   class = "btn-primary", icon = icon("download"))
+                    h5("📥 Download Hasil Individual", style = "margin-top: 0;"),
+                    
+                    # Tombol Download Plot
+                    downloadButton("download_assumption_plots", "Plot (PNG)", class = "btn-warning"),
+                    
+                    # Tombol Download Laporan Teks
+                    downloadButton("download_assumptions", "Laporan Teks (Word)", class = "btn-primary")
                   )
                 ),
                 
@@ -722,14 +766,12 @@ ui <- dashboardPage(
       # =====================================================================
       # TAB UJI BEDA RATA-RATA - DIPERBAIKI
       # =====================================================================
+      
       tabItem(tabName = "uji_rata",
               fluidRow(
                 box(
                   title = "⚙️ Kontrol Uji Beda Rata-rata", 
-                  status = "primary", 
-                  solidHeader = TRUE,
-                  width = 4,
-                  class = "custom-box",
+                  status = "primary", solidHeader = TRUE, width = 4, class = "custom-box",
                   selectInput("t_test_var", "Pilih Variabel Numerik:",
                               choices = names(select_if(sovi_data, is.numeric))),
                   selectInput("t_test_type", "Jenis Uji:",
@@ -743,46 +785,36 @@ ui <- dashboardPage(
                   conditionalPanel(
                     condition = "input.t_test_type %in% c('two_sample', 'paired')",
                     selectInput("group_var_t", "Variabel Kelompok:",
-                                choices = c("Tidak ada" = "none"))  # Akan diupdate secara dinamis
+                                choices = c("Tidak ada" = "none"))
                   ),
                   numericInput("alpha_t", "Tingkat Signifikansi (α):", 
                                value = 0.05, min = 0.01, max = 0.1, step = 0.01),
-                  checkboxInput("equal_var", "Asumsi Ragam Sama", value = TRUE),
-                  br(),
-                  div(
-                    class = "download-section",
-                    h5("📥 Download", style = "margin-top: 0;"),
-                    downloadButton("download_t_test", "📄 Hasil Uji T (Word)", 
-                                   class = "btn-primary", icon = icon("download"))
-                  )
+                  checkboxInput("equal_var", "Asumsi Ragam Sama", value = TRUE)
                 ),
                 
                 box(
                   title = "📊 Hasil Uji Beda Rata-rata", 
-                  status = "info", 
-                  solidHeader = TRUE,
-                  width = 8,
-                  class = "custom-box",
+                  status = "info", solidHeader = TRUE, width = 8, class = "custom-box",
                   verbatimTextOutput("t_test_result"),
-                  plotOutput("t_test_plot", height = "300px"),
                   div(class = "interpretation-box",
                       h4("📈 Interpretasi Hasil Uji T"),
                       textOutput("t_test_interpretation")
+                  ),
+                  # Tombol download individual
+                  div(class="download-section",
+                      downloadButton("download_ttest_report", "Laporan Teks (Word)", class="btn-primary"),
+                      downloadButton("download_ttest_plot", "Plot (PNG)", class="btn-warning")
                   )
                 )
               ),
               
               fluidRow(
                 box(
-                  title = "📋 Ringkasan Statistik Kelompok", 
-                  status = "success", 
-                  solidHeader = TRUE,
-                  width = 12,
-                  class = "custom-box",
+                  title = "📋 Ringkasan Statistik & Laporan Lengkap", 
+                  status = "success", solidHeader = TRUE, width = 12, class = "custom-box",
                   DT::dataTableOutput("group_summary_table"),
                   br(),
-                  downloadButton("download_uji_rata_full", "📋 Laporan Lengkap Uji Rata-rata (Word)", 
-                                 class = "btn-success", icon = icon("file-word"))
+                  downloadButton("download_uji_rata_full", "📋 Download Laporan Lengkap (Word)", class = "btn-success", icon = icon("file-word"))
                 )
               )
       ),
@@ -790,159 +822,149 @@ ui <- dashboardPage(
       # =====================================================================
       # TAB UJI PROPORSI & RAGAM - DIPERBAIKI
       # =====================================================================
+      
       tabItem(tabName = "uji_prop_var",
               fluidRow(
                 box(
-                  title = "⚙️ Kontrol Uji Proporsi & Ragam", 
-                  status = "primary", 
-                  solidHeader = TRUE,
-                  width = 4,
-                  class = "custom-box",
+                  title = "⚙️ Kontrol Uji Proporsi & Ragam",
+                  status = "primary", solidHeader = TRUE, width = 4, class = "custom-box",
+                  
+                  # Kontrol input Anda ada di sini (tidak berubah)
                   selectInput("test_type_pv", "Jenis Uji:",
-                              choices = c("Uji Ragam 1 Kelompok" = "var_one",
-                                          "Uji Ragam 2 Kelompok" = "var_two")),  # DIPERBAIKI: Hapus uji proporsi
-                  
-                  selectInput("var_test_var", "Variabel Numerik:",
-                              choices = names(select_if(sovi_data, is.numeric))),
+                              choices = c("Uji Ragam 1 Kelompok" = "var_one", "Uji Ragam 2 Kelompok" = "var_two",
+                                          "Uji Proporsi 1 Kelompok" = "prop_one", "Uji Proporsi 2 Kelompok (Chi-Square)" = "prop_two")),
                   conditionalPanel(
-                    condition = "input.test_type_pv == 'var_one'",
-                    numericInput("var_null", "Ragam H₀:", value = 1, min = 0.01, step = 0.01)
+                    condition = "input.test_type_pv == 'var_one' || input.test_type_pv == 'var_two'",
+                    selectInput("var_test_var", "Variabel Numerik (untuk Uji Ragam):", choices = names(select_if(sovi_data, is.numeric))),
+                    conditionalPanel("input.test_type_pv == 'var_one'", numericInput("var_null", "Ragam H₀:", value = 1, min = 0.01)),
+                    conditionalPanel("input.test_type_pv == 'var_two'", selectInput("group_var_var", "Variabel Kelompok:", choices = c("Tidak ada" = "none")))
                   ),
                   conditionalPanel(
-                    condition = "input.test_type_pv == 'var_two'",
-                    selectInput("group_var_var", "Variabel Kelompok:",
-                                choices = c("Tidak ada" = "none"))  # Akan diupdate secara dinamis
+                    condition = "input.test_type_pv == 'prop_one' || input.test_type_pv == 'prop_two'",
+                    selectInput("prop_var_categorical", "Variabel Kategorikal:", choices = c("Buat variabel di Man. Data" = "")),
+                    conditionalPanel("input.test_type_pv == 'prop_one'",
+                                     selectInput("prop_success_level", "Pilih Kategori 'Sukses':", choices = c("Pilih variabel dulu" = "")),
+                                     numericInput("prop_null_value", "Proporsi H₀ (0-1):", value = 0.5, min = 0, max = 1, step = 0.01)),
+                    conditionalPanel("input.test_type_pv == 'prop_two'", selectInput("prop_group_var", "Variabel Kelompok:", choices = c("Buat variabel di Man. Data" = "")))
                   ),
-                  
-                  numericInput("alpha_pv", "Tingkat Signifikansi (α):", 
-                               value = 0.05, min = 0.01, max = 0.1, step = 0.01),
-                  br(),
-                  div(
-                    class = "download-section",
-                    h5("📥 Download", style = "margin-top: 0;"),
-                    downloadButton("download_prop_var", "📄 Hasil Uji (Word)", 
-                                   class = "btn-primary", icon = icon("download"))
-                  )
+                  numericInput("alpha_pv", "Tingkat Signifikansi (α):", value = 0.05, min = 0.01, max = 0.1, step = 0.01)
                 ),
                 
                 box(
-                  title = "📊 Hasil Uji Ragam", 
-                  status = "info", 
-                  solidHeader = TRUE,
-                  width = 8,
-                  class = "custom-box",
+                  title = "📊 Hasil Uji & Plot", 
+                  status = "info", solidHeader = TRUE, width = 8, class = "custom-box",
                   verbatimTextOutput("prop_var_result"),
                   plotOutput("prop_var_plot", height = "300px"),
                   div(class = "interpretation-box",
                       h4("📊 Interpretasi Hasil"),
                       textOutput("prop_var_interpretation")
+                  ),
+                  # Tombol download individual yang BENAR
+                  div(class="download-section",
+                      downloadButton("download_prop_var_report", "Laporan Teks (Word)", class="btn-primary"),
+                      downloadButton("download_prop_var_plot", "Plot (PNG)", class="btn-warning")
                   )
                 )
               ),
               
               fluidRow(
                 box(
-                  title = "📋 Ringkasan Statistik", 
-                  status = "warning", 
-                  solidHeader = TRUE,
-                  width = 12,
-                  class = "custom-box",
+                  title = "📋 Ringkasan Statistik & Laporan Lengkap", 
+                  status = "warning", solidHeader = TRUE, width = 12, class = "custom-box",
                   DT::dataTableOutput("prop_var_summary_table"),
                   br(),
-                  downloadButton("download_prop_var_full", "📋 Laporan Lengkap (Word)", 
-                                 class = "btn-success", icon = icon("file-word"))
+                  downloadButton("download_prop_var_full", "📋 Download Laporan Lengkap (Word)", class = "btn-success", icon = icon("file-word"))
                 )
               )
       ),
       
+      
       # =====================================================================
       # TAB ANOVA - DIPERBAIKI
       # =====================================================================
+      
       tabItem(tabName = "anova",
               fluidRow(
                 box(
                   title = "⚙️ Kontrol ANOVA", 
-                  status = "primary", 
-                  solidHeader = TRUE,
-                  width = 4,
-                  class = "custom-box",
-                  selectInput("anova_type", "Jenis ANOVA:",
-                              choices = c("One-Way ANOVA (1 Arah)" = "one_way")),  # DIPERBAIKI: Hanya one-way
-                  selectInput("anova_y", "Variabel Dependen (Y):",
-                              choices = names(select_if(sovi_data, is.numeric))),
-                  selectInput("anova_x1", "Faktor 1 (X1):",
-                              choices = c("Tidak ada" = "none")),  # Akan diupdate secara dinamis
-                  numericInput("alpha_anova", "Tingkat Signifikansi (α):", 
-                               value = 0.05, min = 0.01, max = 0.1, step = 0.01),
-                  br(),
-                  div(
-                    class = "download-section",
-                    h5("📥 Download", style = "margin-top: 0;"),
-                    downloadButton("download_anova", "📄 Hasil ANOVA (Word)", 
-                                   class = "btn-primary", icon = icon("download"))
-                  )
-                ),
-                
-                box(
-                  title = "📊 Hasil ANOVA", 
-                  status = "info", 
-                  solidHeader = TRUE,
-                  width = 8,
-                  class = "custom-box",
-                  verbatimTextOutput("anova_result"),
-                  div(class = "interpretation-box",
-                      h4("📈 Interpretasi Hasil ANOVA"),
-                      textOutput("anova_interpretation")
-                  )
-                )
-              ),
-              
-              fluidRow(
-                box(
-                  title = "📊 Visualisasi ANOVA", 
-                  status = "warning", 
-                  solidHeader = TRUE,
-                  width = 6,
-                  class = "custom-box",
-                  plotOutput("anova_plot", height = "400px")
-                ),
-                
-                box(
-                  title = "📋 Uji Lanjut (Post-Hoc)", 
-                  status = "success", 
-                  solidHeader = TRUE,
-                  width = 6,
-                  class = "custom-box",
-                  conditionalPanel(
-                    condition = "output.show_posthoc",
-                    verbatimTextOutput("posthoc_result"),
-                    div(class = "interpretation-box",
-                        h4("🔍 Interpretasi Uji Lanjut"),
-                        textOutput("posthoc_interpretation")
-                    )
+                  status = "primary", solidHeader = TRUE, width = 12, class = "custom-box",
+                  
+                  column(width = 4,
+                         selectInput("anova_type", "Jenis ANOVA:",
+                                     choices = c("One-Way ANOVA (1 Arah)" = "one_way",
+                                                 "Two-Way ANOVA (2 Arah)" = "two_way"))
                   ),
-                  conditionalPanel(
-                    condition = "!output.show_posthoc",
-                    div(
-                      style = "text-align: center; padding: 50px; color: #666;",
-                      icon("info-circle", class = "fa-3x"),
-                      h4("Uji lanjut akan muncul jika ANOVA signifikan")
-                    )
+                  column(width = 4,
+                         selectInput("anova_y", "Variabel Dependen (Y):",
+                                     choices = names(select_if(sovi_data, is.numeric))),
+                         selectInput("anova_x1", "Faktor 1 (X1):",
+                                     choices = c("Tidak ada" = "none"))
+                  ),
+                  column(width = 4,
+                         conditionalPanel(
+                           condition = "input.anova_type == 'two_way'",
+                           selectInput("anova_x2", "Faktor 2 (X2):",
+                                       choices = c("Tidak ada" = "none"))
+                         ),
+                         numericInput("alpha_anova", "Tingkat Signifikansi (α):", 
+                                      value = 0.05, min = 0.01, max = 0.1, step = 0.01)
                   )
                 )
               ),
               
               fluidRow(
                 box(
-                  title = "📋 Ringkasan Lengkap ANOVA", 
-                  status = "primary", 
-                  solidHeader = TRUE,
-                  width = 12,
-                  class = "custom-box",
-                  DT::dataTableOutput("anova_summary_table"),
+                  title = "📊 Hasil Analisis ANOVA & Uji Lanjut",
+                  status = "info", solidHeader = TRUE, width = 12, class = "custom-box",
+                  
+                  column(width = 7,
+                         h4("Tabel ANOVA"),
+                         verbatimTextOutput("anova_result"),
+                         div(class = "interpretation-box",
+                             h4("📈 Interpretasi Hasil ANOVA"),
+                             textOutput("anova_interpretation")
+                         )
+                  ),
+                  column(width = 5,
+                         h4("Uji Lanjut (Post-Hoc)"),
+                         conditionalPanel(
+                           condition = "output.show_posthoc",
+                           verbatimTextOutput("posthoc_result"),
+                           div(class = "interpretation-box",
+                               h4("🔍 Interpretasi Uji Lanjut"),
+                               textOutput("posthoc_interpretation")
+                           )
+                         ),
+                         conditionalPanel(
+                           condition = "!output.show_posthoc",
+                           div(
+                             style = "text-align: center; padding: 50px; color: #666;",
+                             icon("info-circle", class = "fa-3x"),
+                             h4("Uji lanjut akan muncul jika ANOVA signifikan")
+                           )
+                         )
+                  ),
+                  
+                  # Tombol download untuk laporan teks
+                  column(width=12,
+                         div(class = "download-section", style="margin-top: 15px;",
+                             downloadButton("download_anova_report", "Download Laporan Teks (Word)", class="btn-primary")
+                         )
+                  )
+                )
+              ),
+              
+              fluidRow(
+                box(
+                  title = "📊 Visualisasi & Laporan Lengkap",
+                  status = "purple", solidHeader = TRUE, width = 12, class = "custom-box",
+                  plotOutput("anova_plot", height = "400px"),
                   br(),
-                  downloadButton("download_anova_full", "📋 Laporan Lengkap ANOVA (Word)", 
-                                 class = "btn-success", icon = icon("file-word"))
+                  # Tombol download untuk plot dan laporan lengkap
+                  div(class = "download-section",
+                      downloadButton("download_anova_plot", "Download Plot (PNG)", class="btn-warning"),
+                      downloadButton("download_anova_full", "📋 Download Laporan Lengkap (Word)", class = "btn-success", icon = icon("file-word"))
+                  )
                 )
               )
       ),
@@ -982,49 +1004,51 @@ ui <- dashboardPage(
                 
                 box(
                   title = "📊 Hasil Regresi Linear Berganda", 
-                  status = "info", 
-                  solidHeader = TRUE,
-                  width = 8,
-                  class = "custom-box",
+                  status = "info", solidHeader = TRUE, width = 8, class = "custom-box",
                   verbatimTextOutput("regression_summary"),
                   div(class = "interpretation-box",
                       h4("📈 Interpretasi Model Regresi"),
                       textOutput("regression_interpretation")
+                  ),
+                  # Tombol download untuk ringkasan model
+                  div(class = "download-section",
+                      downloadButton("download_summary_report", "Download Ringkasan Model (Word)", class="btn-primary")
                   )
                 )
               ),
               
+              
               fluidRow(
                 box(
-                  title = "📈 Plot Regresi", 
-                  status = "success", 
-                  solidHeader = TRUE,
-                  width = 6,
-                  class = "custom-box",
+                  title = "📈 Plot Regresi (Actual vs. Predicted)", 
+                  status = "success", solidHeader = TRUE, width = 6, class = "custom-box",
                   plotOutput("regression_scatter_plot", height = "400px"),
                   div(class = "interpretation-box",
                       h4("📊 Interpretasi Plot Regresi"),
                       textOutput("regression_plot_interpretation")
+                  ),
+                  # Tombol download untuk plot regresi
+                  div(class = "download-section",
+                      downloadButton("download_scatter_plot_jpg", "Download Plot (JPG)", class="btn-warning")
                   )
                 ),
                 
                 box(
                   title = "📊 Plot Diagnostik Regresi", 
-                  status = "warning", 
-                  solidHeader = TRUE,
-                  width = 6,
-                  class = "custom-box",
-                  plotOutput("regression_plots", height = "400px")
+                  status = "warning", solidHeader = TRUE, width = 6, class = "custom-box",
+                  plotOutput("regression_plots", height = "400px"),
+                  # Tombol download untuk plot diagnostik
+                  div(class = "download-section",
+                      downloadButton("download_regression_plots", "Download Plot Diagnostik (JPG)", class="btn-warning")
+                  )
                 )
               ),
+              
               
               fluidRow(
                 box(
                   title = "🔍 Uji Asumsi Regresi", 
-                  status = "warning", 
-                  solidHeader = TRUE,
-                  width = 6,
-                  class = "custom-box",
+                  status = "warning", solidHeader = TRUE, width = 12, class = "custom-box",
                   tabsetPanel(
                     tabPanel("Linearitas",
                              verbatimTextOutput("linearity_test"),
@@ -1047,34 +1071,27 @@ ui <- dashboardPage(
                                  textOutput("heteroscedasticity_interpretation")
                              )
                     )
+                  ),
+                  # Tombol download untuk laporan asumsi
+                  div(class = "download-section",
+                      downloadButton("download_assumption_report", "Download Laporan Asumsi (Word)", class="btn-primary")
                   )
-                ),
-                
+                )
+              ),
+              
+              fluidRow(
                 box(
-                  title = "📋 Ringkasan Lengkap Model", 
-                  status = "primary", 
-                  solidHeader = TRUE,
-                  width = 6,
-                  class = "custom-box",
-                  DT::dataTableOutput("regression_summary_table"),
-                  br(),
-                  div(
-                    class = "download-section",
-                    h4("📥 Download Options", style = "margin-top: 0;"),
-                    div(
-                      style = "display: flex; gap: 10px; flex-wrap: wrap;",
-                      downloadButton("download_regression_plots", "🖼️ Plot Diagnostik (JPG)", 
-                                     class = "btn-warning", icon = icon("image")),
-                      downloadButton("download_regresi_full", "📋 Laporan Lengkap Regresi (Word)", 
-                                     class = "btn-success", icon = icon("file-word"))
-                    )
-                  )
+                  title = "📋 Download Laporan Lengkap",
+                  status = "danger", solidHeader = TRUE, width = 12, class = "custom-box",
+                  p("Download seluruh hasil analisis di halaman ini dalam satu dokumen Word."),
+                  downloadButton("download_regresi_full", "Download Laporan Lengkap Regresi (Word)", class="btn-danger")
                 )
               )
       )
     )
   )
 )
+
 
 # ===============================================================================
 # 4. LOGIKA SERVER - DIPERBAIKI
@@ -1088,6 +1105,34 @@ server <- function(input, output, session) {
   
   # Reactive untuk menyimpan variabel kategori yang dibuat
   categorical_vars <- reactiveValues(data = list())
+  
+  # LETAKKAN KODE INI SETELAH 'reactiveValues'
+  # Observer untuk mengupdate pilihan input secara dinamis
+  observe({
+    # Dapatkan nama variabel kategori yang sudah dibuat di tab Manajemen Data
+    cat_vars_available <- names(categorical_vars$data)
+    if (is.null(cat_vars_available)) {
+      cat_vars_available <- c("Buat variabel di Man. Data" = "")
+    }
+    
+    # Update pilihan untuk variabel yang akan diuji proporsinya
+    updateSelectInput(session, "prop_var_categorical", choices = cat_vars_available)
+    
+    # Update pilihan untuk variabel kelompok pada uji 2 proporsi
+    updateSelectInput(session, "prop_group_var", choices = cat_vars_available)
+  })
+  
+  # Observer untuk mengupdate level/kategori 'sukses' berdasarkan variabel yang dipilih
+  observe({
+    req(input$prop_var_categorical)
+    
+    # Dapatkan level unik dari variabel kategori yang dipilih
+    var_data <- categorical_vars$data[[input$prop_var_categorical]]
+    if (!is.null(var_data)) {
+      selected_var_levels <- levels(as.factor(var_data))
+      updateSelectInput(session, "prop_success_level", choices = selected_var_levels)
+    }
+  })
   
   observe({
     if(!is.null(input$reg_x) && length(input$reg_x) >= 2) {
@@ -1335,35 +1380,41 @@ server <- function(input, output, session) {
     
     print(result)
   })
+
   
-  output$interpretation_summary <- renderText({
+  # --- Objek Reaktif untuk Interpretasi Summary ---
+  interpretation_summary_reactive <- reactive({
     req(input$var_numeric)
-    var_data <- sovi_data[[input$var_numeric]]
-    var_data <- var_data[!is.na(var_data)]
-    
-    if(length(var_data) == 0) return("Data tidak tersedia untuk interpretasi.")
+    var_data <- na.omit(sovi_data[[input$var_numeric]])
+    validate(need(length(var_data) > 0, "Data tidak tersedia."))
     
     summary_stats <- summary(var_data)
     interpret_descriptive(summary_stats, input$var_numeric)
   })
   
-  output$interpretation_frequency <- renderText({
+  # --- Objek Reaktif untuk Interpretasi Frekuensi ---
+  interpretation_frequency_reactive <- reactive({
     data <- transformed_data()
-    if(is.null(data)) return("Data tidak tersedia untuk interpretasi.")
+    validate(need(!is.null(data), "Data transformasi belum dibuat."))
     
     freq_table <- table(data$data$Kategori, useNA = "ifany")
     most_frequent <- names(freq_table)[which.max(freq_table)]
     least_frequent <- names(freq_table)[which.min(freq_table)]
     total_obs <- sum(freq_table)
     
-    paste0("Berdasarkan kategorisasi menggunakan metode ", data$method, 
-           " pada variabel ", input$var_numeric, ", dari total ", total_obs, " observasi, ",
-           "kategori dengan frekuensi tertinggi adalah ", most_frequent, 
-           " dengan ", max(freq_table), " observasi (", round(max(freq_table)/total_obs*100, 1), "%), ",
-           "sedangkan kategori dengan frekuensi terendah adalah ", least_frequent, 
-           " dengan ", min(freq_table), " observasi (", round(min(freq_table)/total_obs*100, 1), "%). ",
-           "Distribusi ini menunjukkan pola sebaran data yang dapat digunakan untuk analisis lebih lanjut ",
-           "seperti uji beda rata-rata antar kelompok atau ANOVA.")
+    paste0("Berdasarkan kategorisasi menggunakan metode '", data$method, 
+           "', kategori dengan frekuensi tertinggi adalah ", most_frequent, 
+           " (", max(freq_table), " observasi), sedangkan yang terendah adalah ", least_frequent, 
+           " (", min(freq_table), " observasi).")
+  })
+  
+  # --- Render Teks di UI (sekarang hanya memanggil reactive) ---
+  output$interpretation_summary <- renderText({
+    interpretation_summary_reactive()
+  })
+  
+  output$interpretation_frequency <- renderText({
+    interpretation_frequency_reactive()
   })
   
   output$download_transformed <- downloadHandler(
@@ -1380,28 +1431,55 @@ server <- function(input, output, session) {
   
   output$download_manajemen_full <- downloadHandler(
     filename = function() {
-      paste0("laporan_manajemen_data_", Sys.Date(), ".docx")
+      paste0("laporan_manajemen_data_", input$var_numeric, "_", Sys.Date(), ".docx")
     },
     content = function(file) {
-      doc <- read_docx()
-      doc <- doc %>%
-        body_add_par("LAPORAN MANAJEMEN DATA", style = "heading 1") %>%
-        body_add_par("SOVI-STAT EXPLORER", style = "heading 2") %>%
-        body_add_par(paste("Tanggal:", Sys.Date()), style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("1. INFORMASI TRANSFORMASI", style = "heading 2") %>%
-        body_add_par(paste("Variabel yang ditransformasi:", input$var_numeric), style = "Normal") %>%
-        body_add_par(paste("Metode kategorisasi:", input$method_cat), style = "Normal") %>%
-        body_add_par(paste("Jumlah kategori:", input$n_categories), style = "Normal")
+      shinyjs::show("loading_overlay"); on.exit(shinyjs::hide("loading_overlay"))
       
-      data <- transformed_data()
-      if(!is.null(data)) {
-        doc <- doc %>%
-          body_add_par("", style = "Normal") %>%
-          body_add_par("2. HASIL TRANSFORMASI", style = "heading 2") %>%
-          body_add_table(head(data$data, 20), style = "table_template")
-      }
+      # 1. Siapkan semua data yang dibutuhkan
+      params <- list(
+        Variabel = input$var_numeric,
+        Metode = input$method_cat,
+        Jumlah_Kategori = input$n_categories,
+        Breakpoints = if (input$method_cat == 'manual') input$manual_breaks else "Otomatis"
+      )
       
+      summary_output <- capture.output(summary(sovi_data[[input$var_numeric]]))
+      summary_interp <- interpretation_summary_reactive()
+      
+      freq_output <- capture.output(print(table(transformed_data()$data$Kategori)))
+      freq_interp <- interpretation_frequency_reactive()
+      
+      comparison_data <- head(transformed_data()$data, 20)
+      
+      # 2. Susun Dokumen Word
+      doc <- read_docx() %>%
+        body_add_par("Laporan Manajemen & Transformasi Data", style = "heading 1") %>%
+        body_add_par(paste("Tanggal Analisis:", Sys.Date())) %>%
+        body_add_break() %>%
+        
+        body_add_par("1. Parameter Transformasi", style = "heading 2") %>%
+        body_add_table(data.frame(Parameter = names(params), Nilai = unlist(params)), style = "Table Professional") %>%
+        body_add_break() %>%
+        
+        body_add_par("2. Ringkasan Variabel Asli", style = "heading 2")
+      for(line in summary_output) { doc <- doc %>% body_add_par(line) }
+      doc <- doc %>% 
+        body_add_par("Interpretasi:", style = "heading 3") %>%
+        body_add_par(summary_interp) %>%
+        body_add_break() %>%
+        
+        body_add_par("3. Ringkasan Variabel Hasil Transformasi", style = "heading 2")
+      for(line in freq_output) { doc <- doc %>% body_add_par(line) }
+      doc <- doc %>% 
+        body_add_par("Interpretasi:", style = "heading 3") %>%
+        body_add_par(freq_interp) %>%
+        body_add_break() %>%
+        
+        body_add_par("4. Pratinjau Data Transformasi (20 Baris Pertama)", style = "heading 2") %>%
+        body_add_table(comparison_data, style = "Table Professional")
+      
+      # 3. Simpan file
       print(doc, target = file)
     }
   )
@@ -2164,18 +2242,14 @@ server <- function(input, output, session) {
   )
   
   # =====================================================================
-  # SISA KODE SERVER SAMA SEPERTI SEBELUMNYA DENGAN PERBAIKAN MINOR
+  # TAB UJI ASUMSI - (VERSI REAKTIF UNTUK DOWNLOAD)
   # =====================================================================
   
-  # Untuk menghemat ruang, saya akan melanjutkan dengan bagian-bagian penting lainnya
-  # yang memerlukan perbaikan sesuai dengan masalah yang diidentifikasi
-  
-  # TAB UJI ASUMSI - Perbaikan untuk menggunakan variabel kategori yang dibuat
-  output$normality_test <- renderPrint({
+  # --- Objek Reaktif untuk Perhitungan ---
+  normality_test_reactive <- reactive({
     req(input$assumption_var)
-    
     var_data <- sovi_data[[input$assumption_var]]
-    var_data <- var_data[!is.na(var_data)]
+    var_data <- na.omit(var_data)
     
     if(length(var_data) < 3) {
       return("Data tidak mencukupi untuk uji normalitas (minimal 3 observasi).")
@@ -2200,31 +2274,11 @@ server <- function(input, output, session) {
     })
   })
   
-  output$normality_plot <- renderPlot({
-    req(input$assumption_var)
-    
-    var_data <- sovi_data[[input$assumption_var]]
-    var_data <- var_data[!is.na(var_data)]
-    
-    if(length(var_data) < 3) return(NULL)
-    
-    par(mfrow = c(1, 2))
-    
-    hist(var_data, main = paste("Histogram", input$assumption_var), 
-         xlab = input$assumption_var, col = "lightblue", border = "white")
-    curve(dnorm(x, mean = mean(var_data), sd = sd(var_data)), add = TRUE, col = "red", lwd = 2)
-    
-    qqnorm(var_data, main = paste("Q-Q Plot", input$assumption_var))
-    qqline(var_data, col = "red", lwd = 2)
-    
-    par(mfrow = c(1, 1))
-  })
-  
-  output$homogeneity_test <- renderPrint({
+  homogeneity_test_reactive <- reactive({
     req(input$assumption_var, input$group_var)
     
     if(input$group_var == "none" || !input$group_var %in% names(categorical_vars$data)) {
-      return("Pilih variabel kelompok yang valid dari hasil kategorisasi di menu Manajemen Data.")
+      return("Pilih variabel kelompok yang valid dari hasil kategorisasi.")
     }
     
     var_data <- sovi_data[[input$assumption_var]]
@@ -2234,124 +2288,129 @@ server <- function(input, output, session) {
     var_data <- var_data[complete_cases]
     group_data <- group_data[complete_cases]
     
-    if(length(var_data) < 3) {
-      return("Data tidak mencukupi untuk uji homogenitas.")
-    }
-    
-    group_counts <- table(group_data)
-    if(any(group_counts < 2)) {
-      return("Beberapa kelompok memiliki observasi kurang dari 2. Uji homogenitas tidak dapat dilakukan.")
+    if(length(unique(group_data)) < 2 || any(table(group_data) < 2)) {
+      return("Setiap kelompok harus memiliki minimal 2 observasi.")
     }
     
     tryCatch({
-      bartlett_test <- bartlett.test(var_data, group_data)
-      
-      if(require(car, quietly = TRUE)) {
-        levene_test <- leveneTest(var_data, group_data)
-        list(
-          "Bartlett Test" = bartlett_test,
-          "Levene Test" = levene_test,
-          "Interpretasi Bartlett" = if(bartlett_test$p.value >= input$alpha_level) "Ragam homogen antar kelompok" else "Ragam tidak homogen antar kelompok",
-          "Interpretasi Levene" = if(levene_test$`Pr(>F)`[1] >= input$alpha_level) "Ragam homogen antar kelompok" else "Ragam tidak homogen antar kelompok"
-        )
-      } else {
-        list(
-          "Bartlett Test" = bartlett_test,
-          "Interpretasi" = if(bartlett_test$p.value >= input$alpha_level) "Ragam homogen antar kelompok" else "Ragam tidak homogen antar kelompok"
-        )
-      }
+      bartlett_test <- bartlett.test(var_data ~ group_data)
+      levene_test <- leveneTest(var_data ~ group_data)
+      list(
+        "Bartlett Test" = bartlett_test,
+        "Levene Test" = levene_test
+      )
     }, error = function(e) {
       paste("Error dalam uji homogenitas:", e$message)
     })
   })
   
-  output$homogeneity_plot <- renderPlot({
-    req(input$assumption_var, input$group_var)
-    
-    if(input$group_var == "none" || !input$group_var %in% names(categorical_vars$data)) return(NULL)
+  # --- Objek Reaktif untuk Plot ---
+  homogeneity_plot_object <- reactive({
+    req(input$assumption_var, input$group_var != "none")
     
     var_data <- sovi_data[[input$assumption_var]]
     group_data <- categorical_vars$data[[input$group_var]]
     
-    complete_cases <- !is.na(var_data) & !is.na(group_data)
-    plot_data <- data.frame(
-      Variable = var_data[complete_cases],
-      Group = group_data[complete_cases]
-    )
+    plot_data <- data.frame(Variable = var_data, Group = group_data) %>% na.omit()
     
-    if(nrow(plot_data) < 3) return(NULL)
+    p1 <- ggplot(plot_data, aes(x = Group, y = Variable, fill = Group)) +
+      geom_boxplot() +
+      labs(title = paste("Boxplot", input$assumption_var), x = input$group_var) +
+      theme_minimal()
     
-    par(mfrow = c(1, 2))
+    p2 <- ggplot(plot_data, aes(x = .data$Variable)) +
+      geom_density(aes(fill = .data$Group), alpha = 0.5) +
+      labs(title = "Distribusi per Kelompok") +
+      theme_minimal()
     
-    boxplot(Variable ~ Group, data = plot_data, 
-            main = paste("Boxplot", input$assumption_var, "by", input$group_var),
-            xlab = input$group_var, ylab = input$assumption_var,
-            col = rainbow(length(unique(plot_data$Group))))
-    
-    group_means <- tapply(plot_data$Variable, plot_data$Group, mean, na.rm = TRUE)
-    group_vars <- tapply(plot_data$Variable, plot_data$Group, var, na.rm = TRUE)
-    
-    plot(group_means, group_vars, 
-         main = "Mean vs Variance by Group",
-         xlab = "Group Means", ylab = "Group Variances",
-         pch = 19, col = "blue")
-    text(group_means, group_vars, names(group_means), pos = 3, cex = 0.8)
-    
-    par(mfrow = c(1, 1))
+    grid.arrange(p1, p2, ncol = 2)
   })
   
-  output$normality_interpretation <- renderText({
+  
+  # --- Objek Reaktif BARU untuk Plot Normalitas (versi ggplot2) ---
+  normality_plots_object <- reactive({
     req(input$assumption_var)
     
-    var_data <- sovi_data[[input$assumption_var]]
-    var_data <- var_data[!is.na(var_data)]
+    df <- data.frame(value = na.omit(sovi_data[[input$assumption_var]]))
     
-    if(length(var_data) < 3) {
-      return("Data tidak mencukupi untuk interpretasi uji normalitas.")
-    }
+    # Plot 1: Histogram dengan kurva densitas
+    p1 <- ggplot(df, aes(x = value)) +
+      geom_histogram(aes(y = after_stat(density)), bins = 30, fill = "lightblue", color = "white", alpha = 0.7) +
+      geom_density(color = "red", linewidth = 1) +
+      labs(title = paste("Histogram", input$assumption_var)) +
+      theme_minimal()
     
-    tryCatch({
-      if(length(var_data) >= 5000) {
-        ks_test <- ks.test(var_data, "pnorm", mean(var_data), sd(var_data))
-        create_interpretation(ks_test, "normalitas", input$alpha_level)
-      } else {
-        sw_test <- shapiro.test(var_data)
-        create_interpretation(sw_test, "normalitas", input$alpha_level)
-      }
-    }, error = function(e) {
-      "Tidak dapat memberikan interpretasi karena error dalam perhitungan uji normalitas."
-    })
+    # Plot 2: Q-Q Plot
+    p2 <- ggplot(df, aes(sample = value)) +
+      stat_qq() +
+      stat_qq_line(color = "red", linewidth = 1) +
+      labs(title = paste("Q-Q Plot", input$assumption_var)) +
+      theme_minimal()
+    
+    # Gabungkan kedua plot
+    grid.arrange(p1, p2, ncol = 2)
   })
   
+  
+  # --- Render Output untuk UI ---
+  output$normality_test <- renderPrint({ normality_test_reactive() })
+  output$homogeneity_test <- renderPrint({ homogeneity_test_reactive() })
+  
+  output$normality_plot <- renderPlot({
+    normality_plots_object()
+  })
+  
+  output$homogeneity_plot <- renderPlot({
+    if(input$group_var != "none") {
+      homogeneity_plot_object()
+    }
+  })
+  
+  # --- Objek Reaktif untuk Teks Interpretasi Normalitas ---
+  normality_interpretation_reactive <- reactive({
+    # Ambil hasil dari reactive test
+    test_result_list <- normality_test_reactive()
+    
+    # Cek jika hasilnya adalah pesan error (string)
+    if (is.character(test_result_list)) {
+      return(test_result_list)
+    }
+    
+    # Ekstrak hasil tes yang sebenarnya
+    test_res <- test_result_list[[1]] # Ambil hasil (Shapiro/KS test)
+    
+    create_interpretation(test_res, "normalitas", alpha = input$alpha_level)
+  })
+  
+  # --- Render Teks di UI ---
+  output$normality_interpretation <- renderText({
+    normality_interpretation_reactive()
+  })
+  
+  
+  # --- Objek Reaktif untuk Teks Interpretasi Homogenitas ---
+  homogeneity_interpretation_reactive <- reactive({
+    req(input$group_var != "none") # Hanya berjalan jika ada grup
+    
+    test_result_list <- homogeneity_test_reactive()
+    
+    if (is.character(test_result_list)) {
+      return(test_result_list)
+    }
+    
+    # Gunakan Bartlett test sebagai acuan utama untuk interpretasi
+    bartlett_test <- test_result_list[["Bartlett Test"]]
+    
+    create_interpretation(bartlett_test, "homogenitas", alpha = input$alpha_level)
+  })
+  
+  # --- Render Teks di UI ---
   output$homogeneity_interpretation <- renderText({
-    req(input$assumption_var, input$group_var)
-    
-    if(input$group_var == "none" || !input$group_var %in% names(categorical_vars$data)) {
-      return("Pilih variabel kelompok yang valid untuk interpretasi uji homogenitas.")
+    if (input$group_var != "none") {
+      homogeneity_interpretation_reactive()
+    } else {
+      "Pilih variabel kelompok untuk melihat interpretasi."
     }
-    
-    var_data <- sovi_data[[input$assumption_var]]
-    group_data <- categorical_vars$data[[input$group_var]]
-    
-    complete_cases <- !is.na(var_data) & !is.na(group_data)
-    var_data <- var_data[complete_cases]
-    group_data <- group_data[complete_cases]
-    
-    if(length(var_data) < 3) {
-      return("Data tidak mencukupi untuk interpretasi uji homogenitas.")
-    }
-    
-    group_counts <- table(group_data)
-    if(any(group_counts < 2)) {
-      return("Beberapa kelompok memiliki observasi kurang dari 2. Interpretasi tidak dapat diberikan.")
-    }
-    
-    tryCatch({
-      bartlett_test <- bartlett.test(var_data, group_data)
-      create_interpretation(bartlett_test, "homogenitas", input$alpha_level)
-    }, error = function(e) {
-      "Tidak dapat memberikan interpretasi karena error dalam perhitungan uji homogenitas."
-    })
   })
   
   output$assumption_summary_table <- DT::renderDataTable({
@@ -2412,374 +2471,327 @@ server <- function(input, output, session) {
       data.frame(Error = paste("Error:", e$message))
     })
   })
-  # Download handlers untuk uji asumsi
-  output$download_assumptions <- downloadHandler(
+
+  
+  # =====================================================================
+  # DOWNLOAD HANDLERS UNTUK UJI ASUMSI (VERSI FINAL)
+  # =====================================================================
+  
+  # --- Download Plot (PNG) ---
+  # --- Download Plot (PNG) ---
+  output$download_assumption_plots <- downloadHandler(
     filename = function() {
-      paste0("laporan_uji_asumsi_", input$assumption_var, "_", Sys.Date(), ".docx")
+      paste0("plot_uji_asumsi_", input$assumption_var, "_", Sys.Date(), ".png")
     },
     content = function(file) {
-      doc <- read_docx()
-      doc <- doc %>%
-        body_add_par("LAPORAN UJI ASUMSI STATISTIK", style = "heading 1") %>%
-        body_add_par("SOVI-STAT EXPLORER", style = "heading 2") %>%
-        body_add_par(paste("Tanggal:", Sys.Date()), style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("1. INFORMASI UJI", style = "heading 2") %>%
-        body_add_par(paste("Variabel yang diuji:", input$assumption_var), style = "Normal") %>%
-        body_add_par(paste("Variabel kelompok:", input$group_var), style = "Normal") %>%
-        body_add_par(paste("Tingkat signifikansi:", input$alpha_level), style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("2. HASIL UJI NORMALITAS", style = "heading 2")
+      shinyjs::show("loading_overlay")
+      on.exit(shinyjs::hide("loading_overlay"))
       
-      # Tambahkan hasil uji normalitas
-      var_data <- sovi_data[[input$assumption_var]]
-      var_data <- var_data[!is.na(var_data)]
+      # Siapkan plot normalitas
+      norm_plots <- normality_plots_object()
       
-      if(length(var_data) >= 3) {
-        norm_output <- capture.output({
-          if(length(var_data) >= 5000) {
-            print(ks.test(var_data, "pnorm", mean(var_data), sd(var_data)))
-          } else {
-            print(shapiro.test(var_data))
-          }
-        })
-        
-        for(line in norm_output) {
-          doc <- doc %>% body_add_par(line, style = "Normal")
-        }
-      }
-      
-      # =====================================================================
-      # BAGIAN YANG HILANG DAN DIPERBAIKI ADA DI SINI
-      # =====================================================================
-      doc <- doc %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("3. HASIL UJI HOMOGENITAS", style = "heading 2")
-      
-      # Tambahkan hasil uji homogenitas
-      if(input$group_var != "none" && input$group_var %in% names(categorical_vars$data)) {
-        group_data <- categorical_vars$data[[input$group_var]]
-        complete_cases <- !is.na(var_data) & !is.na(group_data)
-        
-        # Pastikan ada cukup data setelah menghilangkan NA
-        if(sum(complete_cases) >= 3 && length(unique(group_data[complete_cases])) > 1) {
-          
-          # Pastikan setiap grup punya cukup data
-          group_counts <- table(group_data[complete_cases])
-          if(all(group_counts >= 2)) {
-            homo_output <- capture.output({
-              print(bartlett.test(var_data[complete_cases], group_data[complete_cases]))
-            })
-            
-            for(line in homo_output) {
-              doc <- doc %>% body_add_par(line, style = "Normal")
-            }
-          } else {
-            doc <- doc %>% body_add_par("Uji homogenitas tidak dapat dilakukan karena salah satu grup memiliki kurang dari 2 observasi.", style = "Normal")
-          }
-        } else {
-          doc <- doc %>% body_add_par("Data tidak mencukupi atau variabel kelompok tidak valid untuk uji homogenitas.", style = "Normal")
-        }
+      # Jika ada variabel kelompok, gabungkan plot normalitas dan homogenitas
+      if (input$group_var != "none") {
+        homo_plots <- homogeneity_plot_object()
+        final_plot <- grid.arrange(norm_plots, homo_plots, nrow = 2, heights = c(1, 1))
+        # Simpan plot gabungan
+        ggsave(file, plot = final_plot, width = 8, height = 7, dpi = 150)
       } else {
-        doc <- doc %>% body_add_par("Tidak ada variabel kelompok yang dipilih untuk uji homogenitas.", style = "Normal")
+        # Jika tidak, simpan plot normalitas saja
+        ggsave(file, plot = norm_plots, width = 8, height = 4, dpi = 150)
       }
-      # =====================================================================
-      # AKHIR DARI BAGIAN YANG DIPERBAIKI
-      # =====================================================================
+    }
+  )
+  
+  # --- Download Laporan Teks Individual (Word) ---
+  output$download_assumptions <- downloadHandler(
+    filename = function() {
+      paste0("laporan_teks_asumsi_", input$assumption_var, "_", Sys.Date(), ".docx")
+    },
+    content = function(file) {
+      shinyjs::show("loading_overlay")
+      on.exit(shinyjs::hide("loading_overlay"))
+      
+      # Ambil hasil teks dari reactive
+      norm_output <- capture.output(print(normality_test_reactive()))
+      
+      doc <- read_docx() %>%
+        body_add_par("Laporan Teks Uji Asumsi", style = "heading 1") %>%
+        body_add_par(paste("Variabel yang diuji:", input$assumption_var)) %>%
+        body_add_break() %>%
+        body_add_par("Hasil Uji Normalitas", style = "heading 2")
+      
+      for(line in norm_output) { doc <- doc %>% body_add_par(line) }
+      
+      # Tambahkan bagian Homogenitas jika ada
+      if (input$group_var != "none") {
+        homo_output <- capture.output(print(homogeneity_test_reactive()))
+        doc <- doc %>%
+          body_add_break() %>%
+          body_add_par("Hasil Uji Homogenitas", style = "heading 2") %>%
+          body_add_par(paste("Variabel Kelompok:", input$group_var))
+        
+        for(line in homo_output) { doc <- doc %>% body_add_par(line) }
+      }
       
       print(doc, target = file)
     }
   )
   
+  
+  # --- Download Laporan LENGKAP (Gabungan Word) - VERSI FINAL ---
   output$download_asumsi_full <- downloadHandler(
     filename = function() {
       paste0("laporan_lengkap_uji_asumsi_", Sys.Date(), ".docx")
     },
     content = function(file) {
-      doc <- read_docx()
-      doc <- doc %>%
-        body_add_par("LAPORAN LENGKAP UJI ASUMSI STATISTIK", style = "heading 1") %>%
-        body_add_par("SOVI-STAT EXPLORER", style = "heading 2") %>%
-        body_add_par(paste("Tanggal:", Sys.Date()), style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("1. RINGKASAN EKSEKUTIF", style = "heading 2") %>%
-        body_add_par("Laporan ini menyajikan hasil uji asumsi statistik yang diperlukan sebelum melakukan analisis inferensia pada data SOVI.", style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("2. METODOLOGI", style = "heading 2") %>%
-        body_add_par("Uji normalitas menggunakan Shapiro-Wilk (n<5000) atau Kolmogorov-Smirnov (n≥5000).", style = "Normal") %>%
-        body_add_par("Uji homogenitas menggunakan Bartlett Test dan Levene Test.", style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("3. KESIMPULAN", style = "heading 2") %>%
-        body_add_par("Hasil uji asumsi menentukan pemilihan metode analisis statistik yang tepat untuk data SOVI.", style = "Normal")
+      # Tampilkan notifikasi loading
+      shinyjs::show("loading_overlay")
+      on.exit(shinyjs::hide("loading_overlay"))
+      
+      # --- Bagian 1: Siapkan Semua Data dan Plot ---
+      
+      # a. Ringkasan Normalitas Semua Variabel
+      hasil_normalitas <- data.frame(
+        Variabel = character(), Metode_Uji = character(), Statistik = numeric(),
+        P_Value = numeric(), Keputusan_Alpha_0.05 = character(), stringsAsFactors = FALSE
+      )
+      for (var_name in names(select_if(sovi_data, is.numeric))) {
+        var_data <- na.omit(sovi_data[[var_name]])
+        if (length(var_data) >= 3) {
+          test_res <- if(length(var_data) >= 5000) ks.test(var_data, "pnorm", mean(var_data), sd(var_data)) else shapiro.test(var_data)
+          metode <- if(length(var_data) >= 5000) "Kolmogorov-Smirnov" else "Shapiro-Wilk"
+          hasil_normalitas <- rbind(hasil_normalitas, data.frame(
+            Variabel = var_name, Metode_Uji = metode, Statistik = round(test_res$statistic, 4),
+            P_Value = round(test_res$p.value, 4), Keputusan_Alpha_0.05 = ifelse(test_res$p.value < 0.05, "Tidak Normal", "Normal")
+          ))
+        }
+      }
+      
+      # b. Detail Normalitas Variabel Terpilih (Plot & Interpretasi)
+      norm_interp_selected <- normality_interpretation_reactive()
+      temp_norm_plot <- tempfile(fileext = ".png")
+      ggsave(temp_norm_plot, plot = normality_plots_object(), width = 8, height = 4)
+      
+      # c. Detail Homogenitas Variabel Terpilih (jika ada)
+      if (input$group_var != "none") {
+        homo_output <- capture.output(print(homogeneity_test_reactive()))
+        homo_interp <- homogeneity_interpretation_reactive() # <-- SEKARANG INI AMAN
+        temp_homo_plot <- tempfile(fileext = ".png")
+        ggsave(temp_homo_plot, plot = homogeneity_plot_object(), width = 8, height = 4)
+      }
+      
+      # --- Bagian 2: Susun Dokumen Word ---
+      doc <- read_docx() %>%
+        body_add_par("Laporan Lengkap Uji Asumsi", style = "heading 1") %>%
+        body_add_par(paste("Tanggal Analisis:", Sys.Date())) %>%
+        body_add_break() %>%
+        body_add_par("1. Ringkasan Uji Normalitas (Semua Variabel)", style = "heading 2") %>%
+        body_add_table(hasil_normalitas, style = "Table Professional") %>%
+        body_add_break() %>%
+        body_add_par("2. Detail Analisis (Variabel Terpilih di UI)", style = "heading 2") %>%
+        body_add_par(paste("Variabel Uji:", input$assumption_var)) %>%
+        body_add_par("Plot Normalitas:", style = "heading 3") %>%
+        body_add_img(src = temp_norm_plot, width = 6, height = 3) %>%
+        body_add_par("Interpretasi Normalitas:", style = "heading 3") %>%
+        body_add_par(norm_interp_selected)
+      
+      if (input$group_var != "none") {
+        doc <- doc %>%
+          body_add_break() %>%
+          body_add_par("Hasil Uji Homogenitas", style = "heading 2") %>%
+          body_add_par(paste("Variabel Kelompok:", input$group_var)) %>%
+          body_add_par("Plot Homogenitas:", style = "heading 3") %>%
+          body_add_img(src = temp_homo_plot, width = 6, height = 3) %>%
+          body_add_par("Hasil Teks:", style = "heading 3")
+        
+        for(line in homo_output) { doc <- doc %>% body_add_par(line) }
+        
+        doc <- doc %>%
+          body_add_par("Interpretasi Homogenitas:", style = "heading 3") %>%
+          body_add_par(homo_interp)
+      }
       
       print(doc, target = file)
     }
   )
   
+  
   # =====================================================================
-  # TAB UJI BEDA RATA-RATA - DIPERBAIKI
+  # TAB UJI BEDA RATA-RATA (VERSI REAKTIF FINAL)
   # =====================================================================
   
+  # --- Objek Reaktif untuk Perhitungan ---
   t_test_result <- reactive({
     req(input$t_test_var, input$t_test_type)
-    
     var_data <- sovi_data[[input$t_test_var]]
-    var_data <- var_data[!is.na(var_data)]
-    
-    if(length(var_data) < 2) return(NULL)
     
     tryCatch({
-      if(input$t_test_type == "one_sample") {
+      if (input$t_test_type == "one_sample") {
+        validate(need(length(na.omit(var_data)) >= 2, "Data tidak cukup."))
         t.test(var_data, mu = input$mu_value, conf.level = 1 - input$alpha_t)
-      } else if(input$t_test_type == "two_sample") {
-        if(input$group_var_t == "none" || !input$group_var_t %in% names(categorical_vars$data)) {
-          return(list(error = "Pilih variabel kelompok yang valid dari hasil kategorisasi."))
-        }
-        
-        group_data <- categorical_vars$data[[input$group_var_t]]
-        complete_cases <- !is.na(var_data) & !is.na(group_data)
-        var_clean <- var_data[complete_cases]
-        group_clean <- group_data[complete_cases]
-        
-        group_levels <- unique(group_clean)
-        if(length(group_levels) != 2) {
-          return(list(error = "Variabel kelompok harus memiliki tepat 2 kategori untuk two-sample t-test."))
-        }
-        
-        group1_data <- var_clean[group_clean == group_levels[1]]
-        group2_data <- var_clean[group_clean == group_levels[2]]
-        
-        if(length(group1_data) < 2 || length(group2_data) < 2) {
-          return(list(error = "Setiap kelompok harus memiliki minimal 2 observasi."))
-        }
-        
-        t.test(group1_data, group2_data, var.equal = input$equal_var, conf.level = 1 - input$alpha_t)
-      } else if(input$t_test_type == "paired") {
-        if(input$group_var_t == "none" || !input$group_var_t %in% names(categorical_vars$data)) {
-          return(list(error = "Pilih variabel kelompok yang valid dari hasil kategorisasi."))
-        }
-        
-        group_data <- categorical_vars$data[[input$group_var_t]]
-        complete_cases <- !is.na(var_data) & !is.na(group_data)
-        var_clean <- var_data[complete_cases]
-        group_clean <- group_data[complete_cases]
-        
-        group_levels <- unique(group_clean)
-        if(length(group_levels) != 2) {
-          return(list(error = "Variabel kelompok harus memiliki tepat 2 kategori untuk paired t-test."))
-        }
-        
-        group1_data <- var_clean[group_clean == group_levels[1]]
-        group2_data <- var_clean[group_clean == group_levels[2]]
-        
-        if(length(group1_data) != length(group2_data)) {
-          min_length <- min(length(group1_data), length(group2_data))
-          group1_data <- group1_data[1:min_length]
-          group2_data <- group2_data[1:min_length]
-        }
-        
-        if(length(group1_data) < 2) {
-          return(list(error = "Tidak cukup pasangan data untuk paired t-test."))
-        }
-        
-        t.test(group1_data, group2_data, paired = TRUE, conf.level = 1 - input$alpha_t)
-      }
-    }, error = function(e) {
-      list(error = paste("Error dalam uji t:", e$message))
-    })
-  })
-  
-  output$t_test_result <- renderPrint({
-    result <- t_test_result()
-    if(is.null(result)) {
-      return("Pilih parameter yang valid untuk uji t.")
-    }
-    if("error" %in% names(result)) {
-      return(result$error)
-    }
-    result
-  })
-  
-  output$t_test_plot <- renderPlot({
-    req(input$t_test_var, input$t_test_type)
-    
-    var_data <- sovi_data[[input$t_test_var]]
-    var_data <- var_data[!is.na(var_data)]
-    
-    if(length(var_data) < 2) return(NULL)
-    
-    if(input$t_test_type == "one_sample") {
-      hist(var_data, main = paste("Distribusi", input$t_test_var), 
-           xlab = input$t_test_var, col = "lightblue", border = "white")
-      abline(v = mean(var_data), col = "red", lwd = 2, lty = 1)
-      abline(v = input$mu_value, col = "blue", lwd = 2, lty = 2)
-      legend("topright", c("Sample Mean", "H₀ Mean"), 
-             col = c("red", "blue"), lty = c(1, 2), lwd = 2)
-    } else if(input$t_test_type %in% c("two_sample", "paired")) {
-      if(input$group_var_t != "none" && input$group_var_t %in% names(categorical_vars$data)) {
-        group_data <- categorical_vars$data[[input$group_var_t]]
-        complete_cases <- !is.na(var_data) & !is.na(group_data)
-        
-        plot_data <- data.frame(
-          Variable = var_data[complete_cases],
-          Group = group_data[complete_cases]
-        )
-        
-        if(nrow(plot_data) > 0) {
-          boxplot(Variable ~ Group, data = plot_data,
-                  main = paste("Perbandingan", input$t_test_var, "antar Kelompok"),
-                  xlab = input$group_var_t, ylab = input$t_test_var,
-                  col = rainbow(length(unique(plot_data$Group))))
-        }
-      }
-    }
-  })
-  
-  output$t_test_interpretation <- renderText({
-    result <- t_test_result()
-    if(is.null(result) || "error" %in% names(result)) {
-      return("Tidak dapat memberikan interpretasi karena error dalam perhitungan atau parameter tidak valid.")
-    }
-    
-    var_context <- switch(input$t_test_var,
-                          "POVERTY" = "tingkat kemiskinan",
-                          "SOVI_SCORE" = "skor kerentanan sosial",
-                          "CHILDREN" = "persentase anak-anak",
-                          "ELDERLY" = "persentase lansia",
-                          paste("indikator", tolower(input$t_test_var)))
-    
-    base_interpretation <- create_interpretation(result, "t-test", input$alpha_t)
-    
-    specific_context <- switch(input$t_test_type,
-                               "one_sample" = paste0(" Uji ini membandingkan rata-rata ", var_context, 
-                                                     " dalam sampel (", round(result$estimate, 3), 
-                                                     ") dengan nilai hipotesis (", input$mu_value, ")."),
-                               "two_sample" = paste0(" Uji ini membandingkan rata-rata ", var_context, 
-                                                     " antara dua kelompok berdasarkan ", input$group_var_t, "."),
-                               "paired" = paste0(" Uji ini membandingkan ", var_context, 
-                                                 " pada pengukuran berpasangan berdasarkan ", input$group_var_t, "."))
-    
-    practical_implication <- if(result$p.value < input$alpha_t) {
-      paste0(" Dalam konteks SOVI, perbedaan yang signifikan ini menunjukkan adanya disparitas ", 
-             var_context, " yang perlu mendapat perhatian dalam perumusan kebijakan.")
-    } else {
-      paste0(" Dalam konteks SOVI, tidak adanya perbedaan yang signifikan menunjukkan kondisi ", 
-             var_context, " yang relatif homogen antar kelompok yang dibandingkan.")
-    }
-    
-    paste0(base_interpretation, specific_context, practical_implication)
-  })
-  
-  output$group_summary_table <- DT::renderDataTable({
-    req(input$t_test_var)
-    
-    var_data <- sovi_data[[input$t_test_var]]
-    
-    if(input$t_test_type == "one_sample") {
-      summary_df <- data.frame(
-        "Statistik" = c("N", "Mean", "Std Dev", "Min", "Max", "Median"),
-        "Nilai" = c(
-          length(var_data[!is.na(var_data)]),
-          round(mean(var_data, na.rm = TRUE), 4),
-          round(sd(var_data, na.rm = TRUE), 4),
-          round(min(var_data, na.rm = TRUE), 4),
-          round(max(var_data, na.rm = TRUE), 4),
-          round(median(var_data, na.rm = TRUE), 4)
-        ),
-        stringsAsFactors = FALSE
-      )
-    } else if(input$t_test_type %in% c("two_sample", "paired")) {
-      if(input$group_var_t != "none" && input$group_var_t %in% names(categorical_vars$data)) {
-        group_data <- categorical_vars$data[[input$group_var_t]]
-        complete_cases <- !is.na(var_data) & !is.na(group_data)
-        var_clean <- var_data[complete_cases]
-        group_clean <- group_data[complete_cases]
-        
-        group_summary <- aggregate(var_clean, by = list(Group = group_clean), 
-                                   FUN = function(x) c(
-                                     N = length(x),
-                                     Mean = round(mean(x), 4),
-                                     SD = round(sd(x), 4),
-                                     Min = round(min(x), 4),
-                                     Max = round(max(x), 4),
-                                     Median = round(median(x), 4)
-                                   ))
-        
-        summary_df <- data.frame(
-          "Kelompok" = group_summary$Group,
-          "N" = group_summary$x[, "N"],
-          "Mean" = group_summary$x[, "Mean"],
-          "Std_Dev" = group_summary$x[, "SD"],
-          "Min" = group_summary$x[, "Min"],
-          "Max" = group_summary$x[, "Max"],
-          "Median" = group_summary$x[, "Median"],
-          stringsAsFactors = FALSE
-        )
       } else {
-        summary_df <- data.frame(Pesan = "Pilih variabel kelompok yang valid")
-      }
-    } else {
-      summary_df <- data.frame(Pesan = "Pilih jenis uji yang valid")
-    }
-    
-    DT::datatable(summary_df, 
-                  options = list(pageLength = 10, scrollX = TRUE),
-                  class = 'cell-border stripe hover',
-                  rownames = FALSE)
-  })
-  
-  output$download_t_test <- downloadHandler(
-    filename = function() {
-      paste0("hasil_uji_t_", input$t_test_var, "_", Sys.Date(), ".docx")
-    },
-    content = function(file) {
-      doc <- read_docx()
-      doc <- doc %>%
-        body_add_par("LAPORAN UJI BEDA RATA-RATA (T-TEST)", style = "heading 1") %>%
-        body_add_par("SOVI-STAT EXPLORER", style = "heading 2") %>%
-        body_add_par(paste("Tanggal:", Sys.Date()), style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("1. INFORMASI UJI", style = "heading 2") %>%
-        body_add_par(paste("Variabel yang diuji:", input$t_test_var), style = "Normal") %>%
-        body_add_par(paste("Jenis uji:", input$t_test_type), style = "Normal") %>%
-        body_add_par(paste("Tingkat signifikansi:", input$alpha_t), style = "Normal")
-      
-      result <- t_test_result()
-      if(!is.null(result) && !"error" %in% names(result)) {
-        doc <- doc %>%
-          body_add_par("", style = "Normal") %>%
-          body_add_par("2. HASIL UJI", style = "heading 2")
+        req(input$group_var_t != "none")
+        group_data <- categorical_vars$data[[input$group_var_t]]
+        validate(need(!is.null(group_data), "Variabel kelompok belum dibuat."))
         
-        result_output <- capture.output(print(result))
-        for(line in result_output) {
-          doc <- doc %>% body_add_par(line, style = "Normal")
+        df_clean <- na.omit(data.frame(var = var_data, group = group_data))
+        validate(need(length(unique(df_clean$group)) == 2, "Variabel kelompok harus memiliki 2 kategori."))
+        
+        group_levels <- unique(df_clean$group)
+        group1_data <- df_clean$var[df_clean$group == group_levels[1]]
+        group2_data <- df_clean$var[df_clean$group == group_levels[2]]
+        
+        validate(need(length(group1_data) >= 2 && length(group2_data) >= 2, "Setiap kelompok butuh min. 2 observasi."))
+        
+        if (input$t_test_type == "two_sample") {
+          t.test(group1_data, group2_data, var.equal = input$equal_var, conf.level = 1 - input$alpha_t)
+        } else if (input$t_test_type == "paired") {
+          validate(need(length(group1_data) == length(group2_data), "Data berpasangan harus punya jumlah sama."))
+          t.test(group1_data, group2_data, paired = TRUE, conf.level = 1 - input$alpha_t)
         }
       }
+    }, error = function(e) { list(error = paste("Error:", e$message)) })
+  })
+  
+  # --- Objek Reaktif untuk Interpretasi ---
+  t_test_interpretation_reactive <- reactive({
+    result <- t_test_result()
+    validate(need(!is.null(result) && is.null(result$error), "Hasil uji tidak valid."))
+    create_interpretation(result, "t-test", input$alpha_t)
+  })
+  
+  # --- Objek Reaktif untuk Tabel Ringkasan ---
+  group_summary_table_reactive <- reactive({
+    req(input$t_test_var)
+    var_data <- sovi_data[[input$t_test_var]]
+    
+    if(input$t_test_type == "one_sample" || input$group_var_t == "none") {
+      df <- na.omit(data.frame(Statistik = c("N", "Mean", "Std Dev"),
+                               Nilai = c(length(var_data), mean(var_data), sd(var_data))))
+    } else {
+      group_data <- categorical_vars$data[[input$group_var_t]]
+      df <- na.omit(data.frame(var = var_data, group = group_data)) %>%
+        group_by(group) %>%
+        summarise(N = n(), Mean = mean(var), Std_Dev = sd(var))
+    }
+    return(df)
+  })
+  
+  # --- OBJEK REAKTIF BARU UNTUK PLOT ---
+  t_test_plot_object <- reactive({
+    result <- t_test_result()
+    validate(need(!is.null(result) && is.null(result$error), "Plot tidak dapat dibuat karena error pada perhitungan."))
+    
+    var_data <- na.omit(sovi_data[[input$t_test_var]])
+    
+    if (input$t_test_type == "one_sample") {
+      df <- data.frame(value = var_data)
+      sample_mean <- mean(df$value)
+      
+      # Buat plot ggplot
+      p <- ggplot(df, aes(x = value)) +
+        geom_histogram(aes(y = after_stat(density)), bins = 30, fill = "#3498db", color = "white", alpha = 0.8) +
+        geom_density(color = "#2980b9", linewidth = 1) +
+        geom_vline(aes(xintercept = sample_mean, color = "Rata-rata Sampel"), linetype = "solid", linewidth = 1.5) +
+        geom_vline(aes(xintercept = input$mu_value, color = "Nilai Hipotesis (μ₀)"), linetype = "dashed", linewidth = 1.5) +
+        scale_color_manual(name = "Legenda", values = c("Rata-rata Sampel" = "#e74c3c", "Nilai Hipotesis (μ₀)" = "#2ecc71")) +
+        labs(title = paste("Distribusi", input$t_test_var),
+             subtitle = paste("Rata-rata Sampel =", round(sample_mean, 2), "vs. Hipotesis μ₀ =", input$mu_value),
+             x = input$t_test_var, y = "Densitas") +
+        theme_minimal(base_size = 14) +
+        theme(legend.position = "bottom")
+      
+    } else {
+      group_data <- categorical_vars$data[[input$group_var_t]]
+      df_clean <- na.omit(data.frame(var = var_data, group = group_data))
+      
+      # Buat plot ggplot
+      p <- ggplot(df_clean, aes(x = group, y = var, fill = group)) +
+        geom_boxplot(alpha = 0.7) +
+        geom_jitter(width = 0.1, alpha = 0.3) +
+        labs(title = paste("Perbandingan", input$t_test_var, "antar Kelompok"),
+             x = input$group_var_t, y = input$t_test_var) +
+        theme_minimal(base_size = 14) + 
+        theme(legend.position = "none")
+    }
+    return(p) # Kembalikan objek plot
+  })
+  
+  
+  # --- Render Output untuk UI ---
+  output$t_test_result <- renderPrint({ t_test_result() })
+  output$t_test_interpretation <- renderText({ t_test_interpretation_reactive() })
+  output$group_summary_table <- DT::renderDataTable({
+    df <- group_summary_table_reactive()
+    numeric_cols <- names(df)[sapply(df, is.numeric)]
+    DT::datatable(df, options = list(dom = 't', paging = FALSE), rownames = FALSE) %>%
+      DT::formatRound(columns = numeric_cols, digits = 3)
+  })
+  
+  
+  
+  
+  # --- DOWNLOAD HANDLERS ---
+  output$download_ttest_report <- downloadHandler(
+    filename = function() { paste0("laporan_uji_t_", input$t_test_var, "_", Sys.Date(), ".docx") },
+    content = function(file) {
+      shinyjs::show("loading_overlay"); on.exit(shinyjs::hide("loading_overlay"))
+      
+      doc <- read_docx() %>%
+        body_add_par("Laporan Uji Beda Rata-rata (T-Test)", style = "heading 1") %>%
+        body_add_par(paste("Variabel:", input$t_test_var)) %>%
+        body_add_break() %>%
+        body_add_par("Hasil Uji", style = "heading 2")
+      
+      for(line in capture.output(t_test_result())) { doc <- doc %>% body_add_par(line) }
+      
+      doc <- doc %>% 
+        body_add_par("Interpretasi", style = "heading 2") %>%
+        body_add_par(t_test_interpretation_reactive())
       
       print(doc, target = file)
+    }
+  )
+  
+  output$t_test_plot <- renderPlot({
+    print(t_test_plot_object())
+  })
+  
+  output$download_ttest_plot <- downloadHandler(
+    filename = function() { paste0("plot_uji_t_", input$t_test_var, "_", Sys.Date(), ".png") },
+    content = function(file) {
+      # Sekarang ggsave memanggil objek plot secara langsung, ini cara yang benar
+      ggsave(file, plot = t_test_plot_object(), width = 8, height = 6, dpi = 150)
     }
   )
   
   output$download_uji_rata_full <- downloadHandler(
-    filename = function() {
-      paste0("laporan_lengkap_uji_rata_", Sys.Date(), ".docx")
-    },
+    filename = function() { paste0("laporan_lengkap_uji_rata_", Sys.Date(), ".docx") },
     content = function(file) {
-      doc <- read_docx()
-      doc <- doc %>%
-        body_add_par("LAPORAN LENGKAP UJI BEDA RATA-RATA", style = "heading 1") %>%
-        body_add_par("SOVI-STAT EXPLORER", style = "heading 2") %>%
-        body_add_par(paste("Tanggal:", Sys.Date()), style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("1. RINGKASAN EKSEKUTIF", style = "heading 2") %>%
-        body_add_par("Laporan ini menyajikan hasil uji beda rata-rata untuk menganalisis perbedaan indikator kerentanan sosial antar kelompok atau kondisi.", style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("2. METODOLOGI", style = "heading 2") %>%
-        body_add_par(paste("Jenis uji yang digunakan:", input$t_test_type), style = "Normal") %>%
-        body_add_par("Uji t digunakan untuk membandingkan rata-rata dengan asumsi distribusi normal.", style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("3. KESIMPULAN", style = "heading 2") %>%
-        body_add_par("Hasil uji beda rata-rata memberikan wawasan tentang disparitas kondisi kerentanan sosial yang dapat digunakan untuk prioritas intervensi.", style = "Normal")
+      shinyjs::show("loading_overlay"); on.exit(shinyjs::hide("loading_overlay"))
+      
+      # Simpan plot ke file temporer dengan memanggil objek plot secara langsung
+      temp_plot_path <- tempfile(fileext = ".png")
+      ggsave(temp_plot_path, plot = t_test_plot_object(), width = 8, height = 6, dpi = 150)
+      
+      doc <- read_docx() %>%
+        body_add_par("Laporan Lengkap Uji Beda Rata-rata", style = "heading 1") %>%
+        body_add_par(paste("Tanggal Analisis:", Sys.Date())) %>%
+        body_add_break() %>%
+        body_add_par("1. Hasil Uji", style = "heading 2")
+      
+      for(line in capture.output(t_test_result())) { doc <- doc %>% body_add_par(line) }
+      
+      doc <- doc %>% 
+        body_add_par("2. Interpretasi", style = "heading 2") %>%
+        body_add_par(t_test_interpretation_reactive()) %>%
+        body_add_break() %>%
+        body_add_par("3. Plot Perbandingan", style = "heading 2") %>%
+        body_add_img(src = temp_plot_path, width = 6, height = 4.5) %>%
+        body_add_break() %>%
+        body_add_par("4. Ringkasan Statistik Kelompok", style = "heading 2") %>%
+        body_add_table(group_summary_table_reactive(), style = "Table Professional")
       
       print(doc, target = file)
     }
@@ -2789,59 +2801,52 @@ server <- function(input, output, session) {
   # TAB UJI PROPORSI & RAGAM - DIPERBAIKI
   # =====================================================================
   
+  # --- Objek Reaktif untuk Perhitungan Uji ---
   prop_var_test_result <- reactive({
-    req(input$test_type_pv, input$var_test_var)
-    
-    var_data <- sovi_data[[input$var_test_var]]
-    var_data <- var_data[!is.na(var_data)]
-    
-    if(length(var_data) < 2) return(NULL)
-    
+    req(input$test_type_pv)
     tryCatch({
-      if(input$test_type_pv == "var_one") {
-        # Uji ragam satu kelompok (Chi-square test untuk variance)
+      if (input$test_type_pv == "var_one") {
+        req(input$var_test_var)
+        var_data <- na.omit(sovi_data[[input$var_test_var]])
+        validate(need(length(var_data) >= 2, "Data tidak cukup."))
         n <- length(var_data)
         sample_var <- var(var_data)
         chi_stat <- (n - 1) * sample_var / input$var_null
         p_value <- 2 * min(pchisq(chi_stat, df = n - 1), 1 - pchisq(chi_stat, df = n - 1))
-        
-        list(
-          statistic = chi_stat,
-          parameter = n - 1,
-          p.value = p_value,
-          estimate = sample_var,
-          null.value = input$var_null,
-          method = "One-sample test for variance",
-          data.name = input$var_test_var
-        )
-      } else if(input$test_type_pv == "var_two") {
-        if(input$group_var_var == "none" || !input$group_var_var %in% names(categorical_vars$data)) {
-          return(list(error = "Pilih variabel kelompok yang valid dari hasil kategorisasi."))
-        }
-        
+        list(statistic = setNames(chi_stat, "chisq"), p.value = p_value,
+             estimate = setNames(sample_var, "variance"), null.value = setNames(input$var_null, "variance"),
+             method = "One-sample Chi-squared test for variance", data.name = input$var_test_var)
+      } else if (input$test_type_pv == "var_two") {
+        req(input$var_test_var, input$group_var_var != "none")
+        var_data <- sovi_data[[input$var_test_var]]
         group_data <- categorical_vars$data[[input$group_var_var]]
-        complete_cases <- !is.na(var_data) & !is.na(group_data)
-        var_clean <- var_data[complete_cases]
-        group_clean <- group_data[complete_cases]
-        
-        group_levels <- unique(group_clean)
-        if(length(group_levels) != 2) {
-          return(list(error = "Variabel kelompok harus memiliki tepat 2 kategori untuk uji ragam dua kelompok."))
-        }
-        
-        group1_data <- var_clean[group_clean == group_levels[1]]
-        group2_data <- var_clean[group_clean == group_levels[2]]
-        
-        if(length(group1_data) < 2 || length(group2_data) < 2) {
-          return(list(error = "Setiap kelompok harus memiliki minimal 2 observasi."))
-        }
-        
+        validate(need(!is.null(group_data), "Variabel kelompok belum dibuat."))
+        df_clean <- na.omit(data.frame(var = var_data, group = group_data))
+        validate(need(length(unique(df_clean$group)) == 2, "Variabel kelompok harus memiliki 2 kategori."))
+        group1_data <- df_clean$var[df_clean$group == unique(df_clean$group)[1]]
+        group2_data <- df_clean$var[df_clean$group == unique(df_clean$group)[2]]
+        validate(need(length(group1_data) >= 2 && length(group2_data) >= 2, "Setiap kelompok butuh min. 2 observasi."))
         var.test(group1_data, group2_data, conf.level = 1 - input$alpha_pv)
+      } else if (input$test_type_pv == "prop_one") {
+        req(input$prop_var_categorical, input$prop_success_level, input$prop_null_value)
+        cat_data <- na.omit(categorical_vars$data[[input$prop_var_categorical]])
+        validate(need(!is.null(cat_data) && length(cat_data) > 0, "Variabel kategorikal belum dibuat atau kosong."))
+        x <- sum(cat_data == input$prop_success_level)
+        n <- length(cat_data)
+        prop.test(x = x, n = n, p = input$prop_null_value, conf.level = 1 - input$alpha_pv)
+      } else if (input$test_type_pv == "prop_two") {
+        req(input$prop_var_categorical, input$prop_group_var)
+        validate(need(input$prop_var_categorical != input$prop_group_var, "Variabel uji dan kelompok tidak boleh sama."))
+        var_to_test <- categorical_vars$data[[input$prop_var_categorical]]
+        grouping_var <- categorical_vars$data[[input$prop_group_var]]
+        validate(need(!is.null(var_to_test) && !is.null(grouping_var), "Variabel belum dibuat."))
+        contingency_table <- table(var_to_test, grouping_var)
+        validate(need(all(dim(contingency_table) >= 2), "Kedua variabel harus punya min. 2 level/kategori."))
+        prop.test(contingency_table, conf.level = 1 - input$alpha_pv)
       }
-    }, error = function(e) {
-      list(error = paste("Error dalam uji ragam:", e$message))
-    })
+    }, error = function(e) { list(error = paste("Gagal menjalankan uji:", e$message)) })
   })
+  
   
   output$prop_var_result <- renderPrint({
     result <- prop_var_test_result()
@@ -2892,349 +2897,316 @@ server <- function(input, output, session) {
           par(mfrow = c(1, 1))
         }
       }
+    } else if(input$test_type_pv == "prop_one") {
+      barplot(table(var_data), main = paste("Distribusi", input$var_test_var),
+              xlab = "Kategori", ylab = "Frekuensi", col = "lightblue")
+      abline(h = input$prop_null, col = "red", lwd = 2, lty = 2)
+      legend("topright", paste("Proporsi H₀:", input$prop_null), col = "red", lwd = 2)
+    } else if(input$test_type_pv == "prop_two") {
+      barplot(table(var_data), main = paste("Distribusi", input$var_test_var),
+              xlab = "Kategori", ylab = "Frekuensi", col = "lightblue")
+      abline(h = input$prop_null, col = "red", lwd = 2, lty = 2)
+      legend("topright", paste("Proporsi H₀:", input$prop_null), col = "red", lwd = 2)
     }
   })
   
-  output$prop_var_interpretation <- renderText({
+  
+  prop_var_plot_object <- reactive({
+    validate(need(!is.null(prop_var_test_result()) && is.null(prop_var_test_result()$error), "Plot tidak dapat dibuat."))
+    
+    # Logika untuk Uji Ragam
+    if (input$test_type_pv %in% c("var_one", "var_two")) {
+      var_data <- na.omit(sovi_data[[input$var_test_var]])
+      df <- data.frame(value = var_data)
+      
+      if (input$test_type_pv == "var_one") {
+        ggplot(df, aes(x = value)) +
+          geom_histogram(fill = "seagreen3", color = "white", alpha = 0.8) +
+          labs(title = paste("Distribusi Variabel", input$var_test_var)) + theme_minimal()
+      } else { # var_two
+        req(input$group_var_var != "none")
+        group_data <- categorical_vars$data[[input$group_var_var]]
+        df_grouped <- na.omit(data.frame(value = var_data, group = group_data))
+        ggplot(df_grouped, aes(x = group, y = value, fill = group)) +
+          geom_boxplot() + theme_minimal() + theme(legend.position = "none") +
+          labs(title = "Perbandingan Sebaran antar Kelompok")
+      }
+      # Logika untuk Uji Proporsi
+    } else {
+      req(input$prop_var_categorical)
+      cat_data <- categorical_vars$data[[input$prop_var_categorical]]
+      
+      if (input$test_type_pv == "prop_one") {
+        df <- as.data.frame(table(cat_data))
+        ggplot(df, aes(x = cat_data, y = Freq, fill = cat_data)) +
+          geom_bar(stat = "identity") + theme_minimal() + theme(legend.position = "none") +
+          labs(title = paste("Distribusi Kategori", input$prop_var_categorical), x = "Kategori", y = "Jumlah")
+      } else { # prop_two
+        req(input$prop_group_var != "none")
+        group_data <- categorical_vars$data[[input$prop_group_var]]
+        df_grouped <- na.omit(data.frame(var = cat_data, group = group_data))
+        ggplot(df_grouped, aes(x = var, fill = group)) +
+          geom_bar(position = "dodge") + theme_minimal() +
+          labs(title = "Perbandingan Proporsi antar Kelompok", x = "Kategori Uji", y = "Jumlah")
+      }
+    }
+  })
+  
+
+  prop_var_interpretation_reactive <- reactive({
     result <- prop_var_test_result()
-    if(is.null(result) || "error" %in% names(result)) {
+    # Hentikan jika ada error atau hasil kosong
+    if (is.null(result) || !is.null(result$error)) {
       return("Tidak dapat memberikan interpretasi karena error dalam perhitungan atau parameter tidak valid.")
     }
     
-    var_context <- switch(input$var_test_var,
-                          "POVERTY" = "tingkat kemiskinan",
-                          "SOVI_SCORE" = "skor kerentanan sosial",
-                          "CHILDREN" = "persentase anak-anak",
-                          paste("indikator", tolower(input$var_test_var)))
+    alpha <- input$alpha_pv
+    p_value <- result$p.value
     
-    if(input$test_type_pv == "var_one") {
-      paste0("Uji ragam satu kelompok untuk ", var_context, " menghasilkan statistik χ² = ", 
-             round(result$statistic, 4), " dengan p-value = ", round(result$p.value, 4), ". ",
-             if(result$p.value < input$alpha_pv) {
-               paste0("Hasil signifikan menunjukkan bahwa ragam sampel (", round(result$estimate, 4), 
-                      ") berbeda secara signifikan dari ragam yang dihipotesiskan (", input$var_null, "). ")
-             } else {
-               paste0("Hasil tidak signifikan menunjukkan bahwa ragam sampel (", round(result$estimate, 4), 
-                      ") tidak berbeda secara signifikan dari ragam yang dihipotesiskan (", input$var_null, "). ")
-             },
-             "Dalam konteks SOVI, ragam menunjukkan tingkat variabilitas atau disparitas ", var_context, " antar wilayah.")
-    } else {
-      paste0("Uji ragam dua kelompok (F-test) untuk ", var_context, " menghasilkan statistik F = ", 
-             round(result$statistic, 4), " dengan p-value = ", round(result$p.value, 4), ". ",
-             if(result$p.value < input$alpha_pv) {
-               "Hasil signifikan menunjukkan bahwa ragam kedua kelompok berbeda secara signifikan. "
-             } else {
-               "Hasil tidak signifikan menunjukkan bahwa ragam kedua kelompok tidak berbeda secara signifikan. "
-             },
-             "Perbedaan ragam mengindikasikan tingkat variabilitas ", var_context, 
-             " yang berbeda antar kelompok, yang penting untuk memahami heterogenitas kondisi sosial.")
-    }
-  })
-  
-  output$prop_var_summary_table <- DT::renderDataTable({
-    req(input$var_test_var)
-    
-    var_data <- sovi_data[[input$var_test_var]]
-    
-    if(input$test_type_pv == "var_one") {
-      summary_df <- data.frame(
-        "Statistik" = c("N", "Mean", "Variance", "Std Dev", "Min", "Max"),
-        "Nilai" = c(
-          length(var_data[!is.na(var_data)]),
-          round(mean(var_data, na.rm = TRUE), 4),
-          round(var(var_data, na.rm = TRUE), 4),
-          round(sd(var_data, na.rm = TRUE), 4),
-          round(min(var_data, na.rm = TRUE), 4),
-          round(max(var_data, na.rm = TRUE), 4)
-        ),
-        stringsAsFactors = FALSE
-      )
-    } else if(input$test_type_pv == "var_two") {
-      if(input$group_var_var != "none" && input$group_var_var %in% names(categorical_vars$data)) {
-        group_data <- categorical_vars$data[[input$group_var_var]]
-        complete_cases <- !is.na(var_data) & !is.na(group_data)
-        var_clean <- var_data[complete_cases]
-        group_clean <- group_data[complete_cases]
-        
-        group_summary <- aggregate(var_clean, by = list(Group = group_clean), 
-                                   FUN = function(x) c(
-                                     N = length(x),
-                                     Mean = round(mean(x), 4),
-                                     Variance = round(var(x), 4),
-                                     SD = round(sd(x), 4),
-                                     Min = round(min(x), 4),
-                                     Max = round(max(x), 4)
-                                   ))
-        
-        summary_df <- data.frame(
-          "Kelompok" = group_summary$Group,
-          "N" = group_summary$x[, "N"],
-          "Mean" = group_summary$x[, "Mean"],
-          "Variance" = group_summary$x[, "Variance"],
-          "Std_Dev" = group_summary$x[, "SD"],
-          "Min" = group_summary$x[, "Min"],
-          "Max" = group_summary$x[, "Max"],
-          stringsAsFactors = FALSE
-        )
-      } else {
-        summary_df <- data.frame(Pesan = "Pilih variabel kelompok yang valid")
-      }
-    } else {
-      summary_df <- data.frame(Pesan = "Pilih jenis uji yang valid")
-    }
-    
-    DT::datatable(summary_df, 
-                  options = list(pageLength = 10, scrollX = TRUE),
-                  class = 'cell-border stripe hover',
-                  rownames = FALSE)
-  })
-  
-  output$download_prop_var <- downloadHandler(
-    filename = function() {
-      paste0("hasil_uji_ragam_", input$var_test_var, "_", Sys.Date(), ".docx")
-    },
-    content = function(file) {
-      doc <- read_docx()
-      doc <- doc %>%
-        body_add_par("LAPORAN UJI RAGAM", style = "heading 1") %>%
-        body_add_par("SOVI-STAT EXPLORER", style = "heading 2") %>%
-        body_add_par(paste("Tanggal:", Sys.Date()), style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("1. INFORMASI UJI", style = "heading 2") %>%
-        body_add_par(paste("Variabel yang diuji:", input$var_test_var), style = "Normal") %>%
-        body_add_par(paste("Jenis uji:", input$test_type_pv), style = "Normal") %>%
-        body_add_par(paste("Tingkat signifikansi:", input$alpha_pv), style = "Normal")
-      
-      result <- prop_var_test_result()
-      if(!is.null(result) && !"error" %in% names(result)) {
-        doc <- doc %>%
-          body_add_par("", style = "Normal") %>%
-          body_add_par("2. HASIL UJI", style = "heading 2")
-        
-        result_output <- capture.output(print(result))
-        for(line in result_output) {
-          doc <- doc %>% body_add_par(line, style = "Normal")
+    # --- Logika Interpretasi untuk UJI RAGAM (Sudah Benar) ---
+    if (input$test_type_pv == "var_one") {
+      paste0(
+        "Uji ragam satu kelompok untuk variabel ", result$data.name, " menghasilkan statistik χ² = ",
+        round(result$statistic, 3), " dengan p-value = ", round(p_value, 4), ". ",
+        if (p_value < alpha) {
+          paste0("Hasil ini signifikan, menunjukkan bahwa ragam sampel (", round(result$estimate, 3),
+                 ") berbeda secara signifikan dari ragam hipotesis (", result$null.value, ").")
+        } else {
+          paste0("Hasil ini tidak signifikan, menunjukkan bahwa tidak ada cukup bukti untuk menyatakan ragam sampel (", round(result$estimate, 3),
+                 ") berbeda dari ragam hipotesis (", result$null.value, ").")
         }
-      }
+      )
+    } else if (input$test_type_pv == "var_two") {
+      paste0(
+        "Uji F untuk membandingkan ragam dua kelompok menghasilkan statistik F = ",
+        round(result$statistic, 3), " dengan p-value = ", round(p_value, 4), ". ",
+        if (p_value < alpha) {
+          "Hasil ini signifikan, yang berarti ragam antara kedua kelompok berbeda secara statistik (asumsi homogenitas ragam tidak terpenuhi)."
+        } else {
+          "Hasil ini tidak signifikan, yang berarti tidak ada perbedaan ragam yang cukup berarti antara kedua kelompok (asumsi homogenitas ragam terpenuhi)."
+        }
+      )
       
+      # --- Logika Interpretasi BARU untuk UJI PROPORSI ---
+    } else if (input$test_type_pv == "prop_one") {
+      paste0(
+        "Uji proporsi satu sampel menghasilkan statistik χ² = ", round(result$statistic, 3),
+        " dengan p-value = ", round(p_value, 4), ". ",
+        "Proporsi sampel untuk kategori '", input$prop_success_level, "' adalah ", round(result$estimate, 3), ". ",
+        if (p_value < alpha) {
+          paste0("Hasil ini signifikan. Terdapat cukup bukti untuk menyatakan bahwa proporsi populasi sebenarnya berbeda dari nilai hipotesis (", result$null.value, ").")
+        } else {
+          paste0("Hasil ini tidak signifikan. Tidak ada cukup bukti untuk menyatakan bahwa proporsi populasi sebenarnya berbeda dari nilai hipotesis (", result$null.value, ").")
+        }
+      )
+    } else if (input$test_type_pv == "prop_two") {
+      paste0(
+        "Uji proporsi dua sampel (Uji Chi-Square) menghasilkan statistik χ² = ", round(result$statistic, 3),
+        " dengan p-value = ", round(p_value, 4), ". ",
+        if (p_value < alpha) {
+          paste0("Hasil ini signifikan. Ini menunjukkan adanya hubungan (asosiasi) yang signifikan antara variabel '",
+                 input$prop_var_categorical, "' dan variabel kelompok '", input$prop_group_var, "'.")
+        } else {
+          paste0("Hasil ini tidak signifikan. Ini menunjukkan tidak ada hubungan (asosiasi) yang signifikan antara variabel '",
+                 input$prop_var_categorical, "' dan variabel kelompok '", input$prop_group_var, "'. Kedua variabel tersebut independen.")
+        }
+      )
+    }
+  })
+  
+  # --- Objek Reaktif untuk Tabel Ringkasan (DIPERBAIKI) ---
+  prop_var_summary_table_reactive <- reactive({
+    # Untuk Uji Ragam
+    if (input$test_type_pv %in% c("var_one", "var_two")) {
+      req(input$var_test_var)
+      var_data <- sovi_data[[input$var_test_var]]
+      if (input$test_type_pv == "var_one" || input$group_var_var == "none") {
+        df <- na.omit(data.frame(Statistik = c("N", "Mean", "Variance", "Std Dev"),
+                                 Nilai = c(length(var_data), mean(var_data), var(var_data), sd(var_data))))
+      } else {
+        group_data <- categorical_vars$data[[input$group_var_var]]
+        df <- na.omit(data.frame(var = var_data, group = group_data)) %>%
+          group_by(group) %>%
+          summarise(N = n(), Mean = mean(var), Variance = var(var), Std_Dev = sd(var))
+      }
+      return(df)
+      # Untuk Uji Proporsi
+    } else { 
+      req(input$prop_var_categorical)
+      cat_data <- categorical_vars$data[[input$prop_var_categorical]]
+      if (input$test_type_pv == "prop_one" || input$prop_group_var == "none") {
+        df <- as.data.frame(table(Kategori = cat_data))
+        names(df)[2] <- "Frekuensi"
+        return(df)
+      } else {
+        group_data <- categorical_vars$data[[input$prop_group_var]]
+        df <- as.data.frame(table(Kategori_Uji = cat_data, Kelompok = group_data))
+        names(df)[3] <- "Frekuensi"
+        return(df)
+      }
+    }
+  })
+  
+  # --- Render Output untuk UI ---
+  output$prop_var_result <- renderPrint({ prop_var_test_result() })
+  output$prop_var_plot <- renderPlot({ print(prop_var_plot_object()) })
+  output$prop_var_interpretation <- renderText({ prop_var_interpretation_reactive() })
+  output$prop_var_summary_table <- DT::renderDataTable({
+    df <- prop_var_summary_table_reactive()
+    numeric_cols <- names(df)[sapply(df, is.numeric)]
+    DT::datatable(df, options = list(scrollX = TRUE, paging = FALSE, dom = 't'), rownames = FALSE) %>%
+      DT::formatRound(columns = numeric_cols, digits = 3)
+  })
+  
+  # --- DOWNLOAD HANDLERS (VERSI LENGKAP) ---
+  output$download_prop_var_report <- downloadHandler(
+    filename = function() { paste0("laporan_teks_", input$test_type_pv, "_", Sys.Date(), ".docx") },
+    content = function(file) {
+      shinyjs::show("loading_overlay"); on.exit(shinyjs::hide("loading_overlay"))
+      doc <- read_docx() %>%
+        body_add_par("Laporan Uji Proporsi & Ragam", style="heading 1") %>%
+        body_add_par("Hasil Teks:", style="heading 2")
+      for(line in capture.output(prop_var_test_result())) { doc <- doc %>% body_add_par(line) }
+      doc <- doc %>% 
+        body_add_par("Interpretasi:", style="heading 2") %>%
+        body_add_par(prop_var_interpretation_reactive())
       print(doc, target = file)
+    }
+  )
+  
+  output$download_prop_var_plot <- downloadHandler(
+    filename = function() { paste0("plot_", input$test_type_pv, "_", Sys.Date(), ".png") },
+    content = function(file) {
+      ggsave(file, plot = prop_var_plot_object(), width = 8, height = 5)
     }
   )
   
   output$download_prop_var_full <- downloadHandler(
-    filename = function() {
-      paste0("laporan_lengkap_uji_ragam_", Sys.Date(), ".docx")
-    },
+    filename = function() { paste0("laporan_lengkap_", input$test_type_pv, "_", Sys.Date(), ".docx") },
     content = function(file) {
-      doc <- read_docx()
-      doc <- doc %>%
-        body_add_par("LAPORAN LENGKAP UJI RAGAM", style = "heading 1") %>%
-        body_add_par("SOVI-STAT EXPLORER", style = "heading 2") %>%
-        body_add_par(paste("Tanggal:", Sys.Date()), style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("1. RINGKASAN EKSEKUTIF", style = "heading 2") %>%
-        body_add_par("Laporan ini menyajikan hasil uji ragam untuk menganalisis variabilitas indikator kerentanan sosial.", style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("2. METODOLOGI", style = "heading 2") %>%
-        body_add_par("Uji ragam menggunakan distribusi Chi-square untuk satu kelompok dan F-test untuk dua kelompok.", style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("3. KESIMPULAN", style = "heading 2") %>%
-        body_add_par("Hasil uji ragam memberikan informasi tentang homogenitas atau heterogenitas kondisi kerentanan sosial.", style = "Normal")
+      shinyjs::show("loading_overlay"); on.exit(shinyjs::hide("loading_overlay"))
+      
+      temp_plot_path <- tempfile(fileext = ".png")
+      ggsave(temp_plot_path, plot = prop_var_plot_object(), width = 8, height = 5)
+      
+      doc <- read_docx() %>%
+        body_add_par("Laporan Lengkap Uji Proporsi & Ragam", style = "heading 1") %>%
+        body_add_break() %>%
+        body_add_par("1. Hasil Uji", style = "heading 2")
+      
+      for(line in capture.output(prop_var_test_result())) { doc <- doc %>% body_add_par(line) }
+      
+      doc <- doc %>% 
+        body_add_par("2. Interpretasi", style = "heading 2") %>%
+        body_add_par(prop_var_interpretation_reactive()) %>%
+        body_add_break() %>%
+        body_add_par("3. Plot Hasil", style = "heading 2") %>%
+        body_add_img(src = temp_plot_path, width = 6, height = 3.75) %>%
+        body_add_break() %>%
+        body_add_par("4. Ringkasan Statistik", style = "heading 2") %>%
+        body_add_table(prop_var_summary_table_reactive(), style = "Table Professional")
       
       print(doc, target = file)
     }
   )
   
+  
+  
   # =====================================================================
-  # TAB ANOVA - DIPERBAIKI
+  # TAB ANOVA (VERSI FINAL BERSIH DAN LENGKAP)
   # =====================================================================
   
+  # --- Objek Reaktif Utama ---
   anova_result <- reactive({
-    req(input$anova_y, input$anova_x1)
-    
+    req(input$anova_y, input$anova_x1, input$anova_type)
     if(input$anova_x1 == "none" || !input$anova_x1 %in% names(categorical_vars$data)) {
-      return(list(error = "Pilih variabel faktor yang valid dari hasil kategorisasi."))
+      return(list(error = "Pilih variabel faktor 1 yang valid."))
     }
-    
-    y_data <- sovi_data[[input$anova_y]]
-    x1_data <- categorical_vars$data[[input$anova_x1]]
-    
-    complete_cases <- !is.na(y_data) & !is.na(x1_data)
-    y_clean <- y_data[complete_cases]
-    x1_clean <- x1_data[complete_cases]
-    
-    if(length(y_clean) < 3) {
-      return(list(error = "Data tidak mencukupi untuk ANOVA (minimal 3 observasi)."))
-    }
-    
-    group_counts <- table(x1_clean)
-    if(any(group_counts < 2)) {
-      return(list(error = "Setiap kelompok harus memiliki minimal 2 observasi."))
-    }
-    
-    if(length(unique(x1_clean)) < 2) {
-      return(list(error = "Variabel faktor harus memiliki minimal 2 kategori."))
-    }
-    
-    tryCatch({
-      anova_data <- data.frame(y = y_clean, x1 = as.factor(x1_clean))
-      
-      if(input$anova_type == "one_way") {
-        model <- aov(y ~ x1, data = anova_data)
-        anova_summary <- summary(model)
-        
-        list(
-          model = model,
-          summary = anova_summary,
-          data = anova_data,
-          type = "one_way"
-        )
+    anova_data_full <- data.frame(y = sovi_data[[input$anova_y]], x1 = categorical_vars$data[[input$anova_x1]])
+    if (input$anova_type == "two_way") {
+      if(is.null(input$anova_x2) || input$anova_x2 == "none" || !input$anova_x2 %in% names(categorical_vars$data)) {
+        return(list(error = "Pilih variabel faktor 2 yang valid."))
       }
-    }, error = function(e) {
-      list(error = paste("Error dalam ANOVA:", e$message))
-    })
+      anova_data_full$x2 <- categorical_vars$data[[input$anova_x2]]
+    }
+    anova_data_clean <- na.omit(anova_data_full)
+    validate(need(nrow(anova_data_clean) > 0, "Tidak ada data yang valid setelah menghapus missing values."))
+    tryCatch({
+      if (input$anova_type == "one_way") {
+        model <- aov(y ~ x1, data = anova_data_clean)
+        list(model = model, summary = summary(model), data = anova_data_clean, type = "one_way")
+      } else { # two_way
+        model <- aov(y ~ x1 * x2, data = anova_data_clean)
+        list(model = model, summary = summary(model), data = anova_data_clean, type = "two_way")
+      }
+    }, error = function(e) { list(error = e$message) })
   })
   
-  output$anova_result <- renderPrint({
-    result <- anova_result()
-    if(is.null(result)) {
-      return("Pilih parameter yang valid untuk ANOVA.")
-    }
-    if("error" %in% names(result)) {
-      return(result$error)
-    }
-    result$summary
-  })
-  
-  output$anova_plot <- renderPlot({
-    result <- anova_result()
-    if(is.null(result) || "error" %in% names(result)) return(NULL)
-    
-    if(result$type == "one_way") {
-      par(mfrow = c(2, 2))
-      
-      # Boxplot
-      boxplot(y ~ x1, data = result$data,
-              main = paste("Boxplot", input$anova_y, "by", input$anova_x1),
-              xlab = input$anova_x1, ylab = input$anova_y,
-              col = rainbow(length(unique(result$data$x1))))
-      
-      # Means plot
-      group_means <- tapply(result$data$y, result$data$x1, mean)
-      group_se <- tapply(result$data$y, result$data$x1, function(x) sd(x)/sqrt(length(x)))
-      
-      plot(1:length(group_means), group_means, 
-           main = "Group Means with Error Bars",
-           xlab = "Groups", ylab = "Mean",
-           pch = 19, col = "blue", cex = 1.5,
-           xlim = c(0.5, length(group_means) + 0.5),
-           ylim = c(min(group_means - group_se), max(group_means + group_se)))
-      arrows(1:length(group_means), group_means - group_se,
-             1:length(group_means), group_means + group_se,
-             angle = 90, code = 3, length = 0.1)
-      axis(1, at = 1:length(group_means), labels = names(group_means))
-      
-      # Residuals plot
-      plot(fitted(result$model), residuals(result$model),
-           main = "Residuals vs Fitted",
-           xlab = "Fitted Values", ylab = "Residuals",
-           pch = 19, col = "red")
-      abline(h = 0, lty = 2)
-      
-      # Q-Q plot of residuals
-      qqnorm(residuals(result$model), main = "Q-Q Plot of Residuals")
-      qqline(residuals(result$model), col = "red")
-      
-      par(mfrow = c(1, 1))
-    }
-  })
-  
-  output$anova_interpretation <- renderText({
-    result <- anova_result()
-    if(is.null(result) || "error" %in% names(result)) {
-      return("Tidak dapat memberikan interpretasi karena error dalam perhitungan atau parameter tidak valid.")
-    }
-    
-    f_stat <- result$summary[[1]]$`F value`[1]
-    p_value <- result$summary[[1]]$`Pr(>F)`[1]
-    
-    var_context <- switch(input$anova_y,
-                          "POVERTY" = "tingkat kemiskinan",
-                          "SOVI_SCORE" = "skor kerentanan sosial",
-                          "CHILDREN" = "persentase anak-anak",
-                          paste("indikator", tolower(input$anova_y)))
-    
-    factor_context <- switch(input$anova_x1,
-                             paste("kategori", gsub("_CAT$", "", input$anova_x1)))
-    
-    base_interpretation <- paste0("ANOVA satu arah untuk ", var_context, " berdasarkan ", factor_context, 
-                                  " menghasilkan statistik F = ", round(f_stat, 4), 
-                                  " dengan p-value = ", round(p_value, 4), ". ")
-    
-    significance_interpretation <- if(p_value < input$alpha_anova) {
-      paste0("Hasil signifikan menunjukkan bahwa terdapat perbedaan rata-rata ", var_context, 
-             " yang signifikan antar ", factor_context, ". Hal ini mengindikasikan bahwa ", 
-             factor_context, " berpengaruh terhadap ", var_context, " dalam konteks kerentanan sosial.")
-    } else {
-      paste0("Hasil tidak signifikan menunjukkan bahwa tidak terdapat perbedaan rata-rata ", var_context, 
-             " yang signifikan antar ", factor_context, ". Hal ini mengindikasikan bahwa ", 
-             var_context, " relatif homogen antar ", factor_context, ".")
-    }
-    
-    practical_implication <- if(p_value < input$alpha_anova) {
-      " Perbedaan yang signifikan ini menunjukkan perlunya strategi intervensi yang berbeda untuk setiap kategori dalam upaya mengurangi kerentanan sosial."
-    } else {
-      " Kondisi yang homogen ini menunjukkan bahwa strategi intervensi dapat diterapkan secara seragam tanpa perlu diferensiasi berdasarkan kategori ini."
-    }
-    
-    paste0(base_interpretation, significance_interpretation, practical_implication)
-  })
-  
-  # Post-hoc test
   posthoc_result <- reactive({
     result <- anova_result()
-    if(is.null(result) || "error" %in% names(result)) return(NULL)
-    
+    if(is.null(result) || !is.null(result$error)) return(NULL)
     p_value <- result$summary[[1]]$`Pr(>F)`[1]
-    if(p_value >= input$alpha_anova) return(NULL)  # Only do post-hoc if ANOVA is significant
-    
-    tryCatch({
-      TukeyHSD(result$model)
-    }, error = function(e) {
-      NULL
-    })
+    if(is.na(p_value) || p_value >= input$alpha_anova) return(NULL)
+    TukeyHSD(result$model)
   })
   
-  output$show_posthoc <- reactive({
-    !is.null(posthoc_result())
-  })
-  outputOptions(output, "show_posthoc", suspendWhenHidden = FALSE)
-  
-  output$posthoc_result <- renderPrint({
-    posthoc <- posthoc_result()
-    if(is.null(posthoc)) return("Uji lanjut tidak diperlukan karena ANOVA tidak signifikan.")
-    posthoc
-  })
-  
-  output$posthoc_interpretation <- renderText({
-    posthoc <- posthoc_result()
-    if(is.null(posthoc)) return("")
-    
-    # Extract significant comparisons
-    posthoc_table <- posthoc[[1]]
-    significant_pairs <- rownames(posthoc_table)[posthoc_table[, "p adj"] < input$alpha_anova]
-    
-    if(length(significant_pairs) == 0) {
-      return("Meskipun ANOVA signifikan, uji Tukey HSD tidak menunjukkan perbedaan yang signifikan antar pasangan kelompok setelah koreksi multiple comparison.")
+  # --- Objek Reaktif untuk Interpretasi ---
+  anova_interpretation_reactive <- reactive({
+    result <- anova_result()
+    validate(need(!is.null(result) && is.null(result$error), "Hasil ANOVA tidak valid."))
+    p_value <- result$summary[[1]]$`Pr(>F)`[1]
+    validate(need(!is.na(p_value), "Tidak dapat menghitung p-value."))
+    base_interp <- create_interpretation(list(p.value = p_value), "ANOVA", alpha = input$alpha_anova)
+    if (result$type == "two_way") {
+      p_value_interaksi <- result$summary[[1]]$`Pr(>F)`[3]
+      interaksi_interp <- if(!is.na(p_value_interaksi) && p_value_interaksi < input$alpha_anova) {
+        "Efek interaksi juga signifikan, menunjukkan bahwa pengaruh satu faktor bergantung pada level faktor lainnya."
+      } else { "Efek interaksi tidak signifikan." }
+      base_interp <- paste(base_interp, interaksi_interp)
     }
-    
-    paste0("Uji lanjut Tukey HSD mengidentifikasi ", length(significant_pairs), 
-           " pasangan kelompok yang berbeda signifikan: ", 
-           paste(significant_pairs[1:min(3, length(significant_pairs))], collapse = ", "),
-           if(length(significant_pairs) > 3) " dan lainnya." else ".",
-           " Hasil ini menunjukkan kelompok-kelompok spesifik yang memiliki perbedaan rata-rata signifikan dalam konteks kerentanan sosial.")
+    return(base_interp)
   })
   
+  posthoc_interpretation_reactive <- reactive({
+    posthoc <- posthoc_result()
+    validate(need(!is.null(posthoc), "Uji lanjut tidak dijalankan."))
+    posthoc_df <- as.data.frame(posthoc[[which(grepl("x", names(posthoc)))]])
+    significant_pairs <- rownames(posthoc_df)[posthoc_df[, "p adj"] < input$alpha_anova]
+    if (length(significant_pairs) == 0) {
+      return("Tidak ditemukan perbedaan signifikan antar pasangan kelompok.")
+    } else {
+      paste0("Ditemukan perbedaan rata-rata yang signifikan antara pasangan berikut: ", 
+             paste(significant_pairs, collapse = ", "), ".")
+    }
+  })
+  
+  # --- Objek Reaktif untuk Plot (semua pakai ggplot2) ---
+  anova_plot_object <- reactive({
+    result <- anova_result()
+    validate(need(!is.null(result) && is.null(result$error), "Plot tidak dapat dibuat."))
+    if (result$type == "one_way") {
+      ggplot(result$data, aes(x = x1, y = y, fill = x1)) +
+        geom_boxplot(alpha = 0.8, show.legend = FALSE) +
+        geom_jitter(width = 0.1, alpha = 0.4, show.legend = FALSE) +
+        labs(title = "Perbandingan Kelompok (One-Way ANOVA)", x = "Faktor", y = "Nilai Variabel Dependen") +
+        theme_minimal(base_size = 14)
+    } else { # two_way
+      ggplot(result$data, aes(x = x1, y = y, color = x2, group = x2)) +
+        stat_summary(fun = mean, geom = "line", linewidth = 1.2) +
+        stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, linewidth = 1) +
+        labs(title = "Plot Interaksi (Two-Way ANOVA)", x = "Faktor 1", y = "Rata-rata Variabel Dependen", color = "Faktor 2") +
+        theme_minimal(base_size = 14) + theme(legend.position = "bottom")
+    }
+  })
+  
+  # --- Render Output untuk UI ---
+  output$anova_result <- renderPrint({ anova_result()$summary })
+  output$posthoc_result <- renderPrint({ posthoc_result() })
+  output$show_posthoc <- reactive({ !is.null(posthoc_result()) })
+  outputOptions(output, "show_posthoc", suspendWhenHidden = FALSE)
+  output$anova_interpretation <- renderText({ anova_interpretation_reactive() })
+  output$posthoc_interpretation <- renderText({ posthoc_interpretation_reactive() })
+  output$anova_plot <- renderPlot({ print(anova_plot_object()) })
   output$anova_summary_table <- DT::renderDataTable({
     result <- anova_result()
     if(is.null(result) || "error" %in% names(result)) {
@@ -3261,58 +3233,112 @@ server <- function(input, output, session) {
                   rownames = FALSE)
   })
   
-  output$download_anova <- downloadHandler(
+  # =====================================================================
+  # DOWNLOAD HANDLERS UNTUK ANOVA (VERSI FINAL)
+  # =====================================================================
+  
+  # --- Download Laporan Teks Individual (Word) ---
+  output$download_anova_report <- downloadHandler(
     filename = function() {
-      paste0("hasil_anova_", input$anova_y, "_", Sys.Date(), ".docx")
+      paste0("laporan_teks_anova_", input$anova_y, "_", Sys.Date(), ".docx")
     },
     content = function(file) {
-      doc <- read_docx()
-      doc <- doc %>%
-        body_add_par("LAPORAN ANOVA", style = "heading 1") %>%
-        body_add_par("SOVI-STAT EXPLORER", style = "heading 2") %>%
-        body_add_par(paste("Tanggal:", Sys.Date()), style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("1. INFORMASI ANALISIS", style = "heading 2") %>%
-        body_add_par(paste("Variabel dependen:", input$anova_y), style = "Normal") %>%
-        body_add_par(paste("Faktor:", input$anova_x1), style = "Normal") %>%
-        body_add_par(paste("Jenis ANOVA:", input$anova_type), style = "Normal") %>%
-        body_add_par(paste("Tingkat signifikansi:", input$alpha_anova), style = "Normal")
+      shinyjs::show("loading_overlay"); on.exit(shinyjs::hide("loading_overlay"))
       
-      result <- anova_result()
-      if(!is.null(result) && !"error" %in% names(result)) {
+      # Ambil semua hasil dari reactives
+      anova_output <- capture.output(anova_result()$summary)
+      anova_interp <- anova_interpretation_reactive()
+      posthoc_output <- capture.output(posthoc_result())
+      posthoc_interp <- posthoc_interpretation_reactive()
+      
+      # Buat dokumen Word
+      doc <- read_docx() %>%
+        body_add_par("Laporan Teks Analisis Varian (ANOVA)", style = "heading 1") %>%
+        body_add_par(paste("Variabel Dependen:", input$anova_y)) %>%
+        body_add_break() %>%
+        body_add_par("Hasil Tabel ANOVA", style = "heading 2")
+      
+      for(line in anova_output) { doc <- doc %>% body_add_par(line) }
+      
+      doc <- doc %>% 
+        body_add_par("Interpretasi ANOVA:", style = "heading 3") %>%
+        body_add_par(anova_interp)
+      
+      # Tambahkan bagian Post-Hoc jika ada
+      if (!is.null(posthoc_result())) {
         doc <- doc %>%
-          body_add_par("", style = "Normal") %>%
-          body_add_par("2. HASIL ANOVA", style = "heading 2")
+          body_add_break() %>%
+          body_add_par("Hasil Uji Lanjut (Post-Hoc)", style = "heading 2")
         
-        anova_output <- capture.output(print(result$summary))
-        for(line in anova_output) {
-          doc <- doc %>% body_add_par(line, style = "Normal")
-        }
+        for(line in posthoc_output) { doc <- doc %>% body_add_par(line) }
+        
+        doc <- doc %>%
+          body_add_par("Interpretasi Post-Hoc:", style = "heading 3") %>%
+          body_add_par(posthoc_interp)
       }
       
       print(doc, target = file)
     }
   )
   
-  output$download_anova_full <- downloadHandler(
+  # --- Download Plot (PNG) ---
+  output$download_anova_plot <- downloadHandler(
     filename = function() {
-      paste0("laporan_lengkap_anova_", Sys.Date(), ".docx")
+      paste0("plot_anova_", input$anova_y, "_", Sys.Date(), ".png")
     },
     content = function(file) {
-      doc <- read_docx()
+      # Pastikan plot object ada sebelum menyimpan
+      req(anova_plot_object())
+      ggsave(file, plot = anova_plot_object(), width = 8, height = 6, dpi = 150)
+    }
+  )
+  
+  # --- Download Laporan LENGKAP (Gabungan Word) ---
+  output$download_anova_full <- downloadHandler(
+    filename = function() {
+      paste0("laporan_lengkap_anova_", input$anova_y, "_", Sys.Date(), ".docx")
+    },
+    content = function(file) {
+      shinyjs::show("loading_overlay"); on.exit(shinyjs::hide("loading_overlay"))
+      
+      # 1. Siapkan semua data yang dibutuhkan
+      req(anova_result(), anova_plot_object())
+      anova_output <- capture.output(anova_result()$summary)
+      anova_interp <- anova_interpretation_reactive()
+      posthoc_output <- capture.output(posthoc_result())
+      posthoc_interp <- posthoc_interpretation_reactive()
+      
+      # 2. Simpan plot ke file temporer
+      temp_plot_path <- tempfile(fileext = ".png")
+      ggsave(temp_plot_path, plot = anova_plot_object(), width = 8, height = 6, dpi = 150)
+      
+      # 3. Susun Dokumen Word
+      doc <- read_docx() %>%
+        body_add_par("Laporan Lengkap Analisis Varian (ANOVA)", style = "heading 1") %>%
+        body_add_par(paste("Tanggal Analisis:", Sys.Date())) %>%
+        body_add_break() %>%
+        
+        body_add_par("1. Hasil Uji ANOVA", style = "heading 2")
+      for(line in anova_output) { doc <- doc %>% body_add_par(line) }
+      
+      doc <- doc %>% 
+        body_add_par("Interpretasi ANOVA:", style = "heading 3") %>%
+        body_add_par(anova_interp) %>%
+        body_add_break()
+      
+      if (!is.null(posthoc_result())) {
+        doc <- doc %>%
+          body_add_par("2. Hasil Uji Lanjut (Post-Hoc)", style = "heading 2")
+        for(line in posthoc_output) { doc <- doc %>% body_add_par(line) }
+        doc <- doc %>%
+          body_add_par("Interpretasi Post-Hoc:", style = "heading 3") %>%
+          body_add_par(posthoc_interp) %>%
+          body_add_break()
+      }
+      
       doc <- doc %>%
-        body_add_par("LAPORAN LENGKAP ANOVA", style = "heading 1") %>%
-        body_add_par("SOVI-STAT EXPLORER", style = "heading 2") %>%
-        body_add_par(paste("Tanggal:", Sys.Date()), style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("1. RINGKASAN EKSEKUTIF", style = "heading 2") %>%
-        body_add_par("Laporan ini menyajikan hasil Analysis of Variance (ANOVA) untuk menganalisis perbedaan rata-rata indikator kerentanan sosial antar kelompok.", style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("2. METODOLOGI", style = "heading 2") %>%
-        body_add_par("ANOVA digunakan untuk menguji perbedaan rata-rata lebih dari dua kelompok dengan asumsi normalitas dan homogenitas ragam.", style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("3. KESIMPULAN", style = "heading 2") %>%
-        body_add_par("Hasil ANOVA memberikan wawasan tentang variabilitas indikator kerentanan sosial antar kategori yang dapat digunakan untuk strategi intervensi yang tepat sasaran.", style = "Normal")
+        body_add_par("3. Plot Hasil", style = "heading 2") %>%
+        body_add_img(src = temp_plot_path, width = 6, height = 4.5)
       
       print(doc, target = file)
     }
@@ -3374,7 +3400,7 @@ server <- function(input, output, session) {
     summary(result$model)
   })
   
-  output$regression_interpretation <- renderText({
+  regression_interpretation_reactive <- reactive({
     result <- regression_model()
     if(is.null(result) || "error" %in% names(result)) {
       return("Tidak dapat memberikan interpretasi karena error dalam perhitungan atau parameter tidak valid.")
@@ -3480,7 +3506,7 @@ server <- function(input, output, session) {
   })
   
   # Assumption tests for regression
-  output$linearity_test <- renderPrint({
+  linearity_test_reactive <- reactive({
     result <- regression_model()
     if(is.null(result) || "error" %in% names(result)) {
       return("Model regresi tidak tersedia untuk uji linearitas.")
@@ -3506,7 +3532,7 @@ server <- function(input, output, session) {
     })
   })
   
-  output$linearity_interpretation <- renderText({
+  linearity_interpretation_reactive <- reactive({
     result <- regression_model()
     if(is.null(result) || "error" %in% names(result)) {
       return("Tidak dapat memberikan interpretasi uji linearitas.")
@@ -3524,7 +3550,7 @@ server <- function(input, output, session) {
     })
   })
   
-  output$multicollinearity_test <- renderPrint({
+  multicollinearity_test_reactive <- reactive({
     result <- regression_model()
     if(is.null(result) || "error" %in% names(result)) {
       return("Model regresi tidak tersedia untuk uji multikolinearitas.")
@@ -3551,7 +3577,7 @@ server <- function(input, output, session) {
     })
   })
   
-  output$multicollinearity_interpretation <- renderText({
+  multicollinearity_interpretation_reactive <- reactive({
     result <- regression_model()
     if(is.null(result) || "error" %in% names(result)) {
       return("Tidak dapat memberikan interpretasi uji multikolinearitas.")
@@ -3579,7 +3605,7 @@ server <- function(input, output, session) {
     })
   })
   
-  output$heteroscedasticity_test <- renderPrint({
+  heteroscedasticity_test_reactive <- reactive({
     result <- regression_model()
     if(is.null(result) || "error" %in% names(result)) {
       return("Model regresi tidak tersedia untuk uji heteroskedastisitas.")
@@ -3604,7 +3630,7 @@ server <- function(input, output, session) {
     })
   })
   
-  output$heteroscedasticity_interpretation <- renderText({
+  heteroscedasticity_interpretation_reactive <- reactive({
     result <- regression_model()
     if(is.null(result) || "error" %in% names(result)) {
       return("Tidak dapat memberikan interpretasi uji heteroskedastisitas.")
@@ -3621,6 +3647,17 @@ server <- function(input, output, session) {
       "Tidak dapat memberikan interpretasi karena error dalam perhitungan."
     })
   })
+  
+  # --- Render Output untuk UI (Sekarang hanya memanggil reactive) ---
+  output$regression_summary <- renderPrint({ summary(regression_model()$model) })
+  output$regression_interpretation <- renderText({ regression_interpretation_reactive() })
+  output$linearity_test <- renderPrint({ linearity_test_reactive() })
+  output$linearity_interpretation <- renderText({ linearity_interpretation_reactive() })
+  output$multicollinearity_test <- renderPrint({ multicollinearity_test_reactive() })
+  output$multicollinearity_interpretation <- renderText({ multicollinearity_interpretation_reactive() })
+  output$heteroscedasticity_test <- renderPrint({ heteroscedasticity_test_reactive() })
+  output$heteroscedasticity_interpretation <- renderText({ heteroscedasticity_interpretation_reactive() })
+  
   
   output$regression_summary_table <- DT::renderDataTable({
     result <- regression_model()
@@ -3699,43 +3736,536 @@ server <- function(input, output, session) {
     }
   )
   
+  # --- Download Laporan LENGKAP REGRESI (Word) - VERSI FINAL ---
   output$download_regresi_full <- downloadHandler(
     filename = function() {
-      paste0("laporan_lengkap_regresi_", Sys.Date(), ".docx")
+      paste0("laporan_lengkap_regresi_", input$reg_y, "_", Sys.Date(), ".docx")
     },
     content = function(file) {
-      doc <- read_docx()
-      doc <- doc %>%
-        body_add_par("LAPORAN LENGKAP REGRESI LINEAR BERGANDA", style = "heading 1") %>%
-        body_add_par("SOVI-STAT EXPLORER", style = "heading 2") %>%
-        body_add_par(paste("Tanggal:", Sys.Date()), style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("1. RINGKASAN EKSEKUTIF", style = "heading 2") %>%
-        body_add_par("Laporan ini menyajikan hasil analisis regresi linear berganda untuk mengidentifikasi faktor-faktor yang berpengaruh terhadap indikator kerentanan sosial.", style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("2. METODOLOGI", style = "heading 2") %>%
-        body_add_par("Regresi linear berganda digunakan untuk menganalisis hubungan antara satu variabel dependen dengan beberapa variabel independen.", style = "Normal") %>%
-        body_add_par("Model diasumsikan memenuhi asumsi linearitas, independensi, homoskedastisitas, dan normalitas residual.", style = "Normal") %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("3. HASIL UTAMA", style = "heading 2")
+      shinyjs::show("loading_overlay")
+      on.exit(shinyjs::hide("loading_overlay"))
       
-      result <- regression_model()
-      if(!is.null(result) && !"error" %in% names(result)) {
-        model_summary <- summary(result$model)
-        doc <- doc %>%
-          body_add_par(paste("R-squared:", round(model_summary$r.squared, 4)), style = "Normal") %>%
-          body_add_par(paste("Adjusted R-squared:", round(model_summary$adj.r.squared, 4)), style = "Normal") %>%
-          body_add_par(paste("F-statistic:", round(model_summary$fstatistic[1], 4)), style = "Normal")
-      }
+      # 1. Ambil semua hasil dari objek reaktif
+      model_obj <- regression_model()
+      validate(need(!is.null(model_obj) && is.null(model_obj$error), "Model regresi belum berhasil dibuat."))
+      
+      summary_output <- capture.output(summary(model_obj$model))
+      interp_model <- regression_interpretation_reactive()
+      interp_plot <- regression_plot_interpretation_reactive() # Tambahkan interpretasi plot
+      
+      linear_output <- capture.output(linearity_test_reactive())
+      linear_interp <- linearity_interpretation_reactive()
+      
+      multi_output <- capture.output(multicollinearity_test_reactive())
+      multi_interp <- multicollinearity_interpretation_reactive()
+      
+      hetero_output <- capture.output(heteroscedasticity_test_reactive())
+      hetero_interp <- heteroscedasticity_interpretation_reactive()
+      
+      # --- BAGIAN BARU: Simpan KEDUA plot ke file temporer ---
+      
+      # 2a. Simpan plot Regresi (Actual vs Predicted)
+      temp_scatter_path <- tempfile(fileext = ".png")
+      png(temp_scatter_path, width = 800, height = 600)
+      predicted <- fitted(model_obj$model)
+      actual <- model_obj$data$y
+      plot(actual, predicted, 
+           main = paste("Actual vs Predicted:", input$reg_y),
+           xlab = "Actual Values", ylab = "Predicted Values",
+           pch = 19, col = "#2980b9")
+      abline(0, 1, col = "#c0392b", lwd = 2, lty = 2)
+      dev.off()
+      
+      # 2b. Simpan plot Diagnostik
+      temp_diag_plot_path <- tempfile(fileext = ".png")
+      png(temp_diag_plot_path, width = 800, height = 800)
+      par(mfrow = c(2, 2))
+      plot(model_obj$model)
+      dev.off()
+      
+      # 3. Susun Dokumen Word yang Lebih Lengkap
+      doc <- read_docx() %>%
+        body_add_par("Laporan Lengkap Regresi Linear Berganda", style = "heading 1") %>%
+        body_add_par(paste("Tanggal Analisis:", Sys.Date())) %>%
+        body_add_break() %>%
+        body_add_par("1. Spesifikasi Model", style = "heading 2") %>%
+        body_add_par(paste("Variabel Dependen (Y):", input$reg_y)) %>%
+        body_add_par(paste("Variabel Independen (X):", paste(input$reg_x, collapse = ", "))) %>%
+        body_add_break() %>%
+        
+        body_add_par("2. Ringkasan Model", style = "heading 2")
+      for(line in summary_output) { doc <- doc %>% body_add_par(line) }
       
       doc <- doc %>%
-        body_add_par("", style = "Normal") %>%
-        body_add_par("4. KESIMPULAN", style = "heading 2") %>%
-        body_add_par("Model regresi memberikan wawasan tentang faktor-faktor yang berkontribusi terhadap kerentanan sosial dan dapat digunakan untuk prediksi serta perumusan kebijakan.", style = "Normal")
+        body_add_par("Interpretasi Model:", style = "heading 3") %>%
+        body_add_par(interp_model) %>%
+        body_add_break() %>%
+        
+        # --- BAGIAN BARU: Masukkan Plot Regresi ---
+        body_add_par("3. Plot Model Regresi", style = "heading 2") %>%
+        body_add_img(src = temp_scatter_path, width = 6, height = 4.5) %>%
+        body_add_par("Interpretasi Plot:", style = "heading 3") %>%
+        body_add_par(interp_plot) %>%
+        body_add_break() %>%
+        
+        body_add_par("4. Uji Asumsi Regresi", style = "heading 2") %>%
+        body_add_par("Linearitas (Rainbow Test):", style = "heading 3")
+      for(line in linear_output) { doc <- doc %>% body_add_par(line) }
+      doc <- doc %>% body_add_par(paste("Interpretasi:", linear_interp)) %>%
+        
+        body_add_par("Multikolinearitas (VIF):", style = "heading 3")
+      for(line in multi_output) { doc <- doc %>% body_add_par(line) }
+      doc <- doc %>% body_add_par(paste("Interpretasi:", multi_interp)) %>%
+        
+        body_add_par("Heteroskedastisitas (Breusch-Pagan Test):", style = "heading 3")
+      for(line in hetero_output) { doc <- doc %>% body_add_par(line) }
+      doc <- doc %>% body_add_par(paste("Interpretasi:", hetero_interp)) %>%
+        body_add_break() %>%
+        
+        body_add_par("5. Plot Diagnostik", style = "heading 2") %>%
+        body_add_img(src = temp_diag_plot_path, width = 6, height = 6)
+      
+      # 4. Simpan file
+      print(doc, target = file)
+    }
+  )
+  
+  # Jangan lupa pastikan Anda juga sudah membuat reactive untuk interpretasi plotnya
+  # Jika belum ada, tambahkan ini di server Anda
+  regression_plot_interpretation_reactive <- reactive({
+    result <- regression_model()
+    if(is.null(result) || "error" %in% names(result)) {
+      return("Plot tidak tersedia karena error dalam model regresi.")
+    }
+    
+    predicted <- fitted(result$model)
+    actual <- result$data$y
+    correlation <- cor(actual, predicted, use = "complete.obs")
+    
+    paste0("Plot actual vs predicted menunjukkan korelasi r = ", round(correlation, 3), 
+           " antara nilai aktual dan prediksi model. ",
+           if(correlation > 0.8) {
+             "Korelasi yang tinggi ini menunjukkan bahwa model memiliki kemampuan prediksi yang baik."
+           } else if(correlation > 0.5) {
+             "Korelasi yang sedang ini menunjukkan bahwa model memiliki kemampuan prediksi yang cukup baik."
+           } else {
+             "Korelasi yang rendah ini menunjukkan bahwa model memiliki kemampuan prediksi yang terbatas."
+           })
+  })
+  
+  # Dan pastikan output di UI memanggilnya
+  output$regression_plot_interpretation <- renderText({
+    regression_plot_interpretation_reactive()
+  })
+  
+  # =====================================================================
+  # DOWNLOAD HANDLERS INDIVIDUAL UNTUK REGRESI
+  # =====================================================================
+  
+  # --- Download Ringkasan Model (Word) ---
+  output$download_summary_report <- downloadHandler(
+    filename = function() {
+      paste0("ringkasan_model_regresi_", input$reg_y, "_", Sys.Date(), ".docx")
+    },
+    content = function(file) {
+      shinyjs::show("loading_overlay")
+      on.exit(shinyjs::hide("loading_overlay"))
+      
+      model_obj <- regression_model()
+      validate(need(!is.null(model_obj) && is.null(model_obj$error), "Model belum dibuat."))
+      
+      summary_output <- capture.output(summary(model_obj$model))
+      interp_model <- regression_interpretation_reactive()
+      
+      doc <- read_docx() %>%
+        body_add_par("Ringkasan Model Regresi", style = "heading 1") %>%
+        body_add_par(paste("Model:", model_obj$formula)) %>%
+        body_add_break() %>%
+        body_add_par("Hasil Summary", style = "heading 2")
+      
+      for(line in summary_output) { doc <- doc %>% body_add_par(line) }
+      
+      doc <- doc %>%
+        body_add_break() %>%
+        body_add_par("Interpretasi", style = "heading 2") %>%
+        body_add_par(interp_model)
       
       print(doc, target = file)
     }
   )
+  
+  # --- Download Plot Regresi (JPG) ---
+  output$download_scatter_plot_jpg <- downloadHandler(
+    filename = function() {
+      paste0("plot_regresi_", input$reg_y, "_", Sys.Date(), ".jpg")
+    },
+    content = function(file) {
+      result <- regression_model()
+      validate(need(!is.null(result) && is.null(result$error), "Model belum dibuat."))
+      
+      jpeg(file, width = 800, height = 600, quality = 95)
+      # Replikasi kode plotting dari output$regression_scatter_plot
+      predicted <- fitted(result$model)
+      actual <- result$data$y # Ambil dari data yang sudah bersih
+      plot(actual, predicted, 
+           main = paste("Actual vs Predicted:", input$reg_y),
+           xlab = "Actual Values", ylab = "Predicted Values",
+           pch = 19, col = "#2980b9", sub = "Garis Merah: Kesesuaian Sempurna (Y=X)")
+      abline(0, 1, col = "#c0392b", lwd = 2, lty = 2)
+      dev.off()
+    }
+  )
+  
+  # --- Download Laporan Asumsi (Word) ---
+  output$download_assumption_report <- downloadHandler(
+    filename = function() {
+      paste0("laporan_asumsi_regresi_", input$reg_y, "_", Sys.Date(), ".docx")
+    },
+    content = function(file) {
+      shinyjs::show("loading_overlay")
+      on.exit(shinyjs::hide("loading_overlay"))
+      
+      # Ambil semua hasil asumsi dari reactives
+      linear_output <- capture.output(linearity_test_reactive())
+      linear_interp <- linearity_interpretation_reactive()
+      multi_output <- capture.output(multicollinearity_test_reactive())
+      multi_interp <- multicollinearity_interpretation_reactive()
+      hetero_output <- capture.output(heteroscedasticity_test_reactive())
+      hetero_interp <- heteroscedasticity_interpretation_reactive()
+      
+      doc <- read_docx() %>%
+        body_add_par("Laporan Uji Asumsi Regresi", style = "heading 1") %>%
+        body_add_par(paste("Model untuk variabel dependen:", input$reg_y)) %>%
+        body_add_break() %>%
+        
+        body_add_par("Linearitas (Rainbow Test)", style = "heading 2")
+      for(line in linear_output) { doc <- doc %>% body_add_par(line) }
+      doc <- doc %>% body_add_par(paste("Interpretasi:", linear_interp)) %>%
+        
+        body_add_par("Multikolinearitas (VIF)", style = "heading 2")
+      for(line in multi_output) { doc <- doc %>% body_add_par(line) }
+      doc <- doc %>% body_add_par(paste("Interpretasi:", multi_interp)) %>%
+        
+        body_add_par("Heteroskedastisitas (Breusch-Pagan Test)", style = "heading 2")
+      for(line in hetero_output) { doc <- doc %>% body_add_par(line) }
+      doc <- doc %>% body_add_par(paste("Interpretasi:", hetero_interp))
+      
+      print(doc, target = file)
+    }
+  )
+  
+  # LETAKKAN SELURUH BLOK KODE INI DI DALAM FUNGSI server
+  
+  # =====================================================================
+  # ANALISIS CLUSTERING (K-MEANS)
+  # =====================================================================
+  
+  # 1. Update pilihan variabel untuk clustering secara dinamis
+  # Kita ambil dari data master yang sudah bersih
+  updateSelectizeInput(
+    session, "cluster_vars",
+    choices = names(sovi_data)[sapply(sovi_data, is.numeric)], # sovi_data adalah versi non-spasial
+    selected = c("POVERTY", "LOWEDU", "NOELECTRIC", "ILLITERATE"),
+    server = TRUE
+  )
+  
+  # 2. Lakukan perhitungan clustering HANYA saat tombol ditekan
+  cluster_results <- eventReactive(input$run_cluster, {
+    
+    # Validasi: pastikan pengguna memilih minimal 2 variabel
+    validate(
+      need(length(input$cluster_vars) >= 2, "Silakan pilih minimal 2 variabel untuk clustering.")
+    )
+    
+    # Persiapan data
+    data_for_clustering <- sovi_data %>%
+      select(all_of(input$cluster_vars)) %>%
+      na.omit() # Hapus baris dengan nilai NA
+    
+    # PENTING: Lakukan scaling
+    data_scaled <- scale(data_for_clustering)
+    
+    # Jalankan algoritma K-Means
+    set.seed(123) # Agar hasilnya selalu sama
+    kmeans_model <- kmeans(data_scaled, centers = input$cluster_k, nstart = 25)
+    
+    # Buat tabel ringkasan
+    summary_table <- data_for_clustering %>%
+      mutate(Klaster = as.factor(kmeans_model$cluster)) %>%
+      group_by(Klaster) %>%
+      summarise(across(everything(), list(mean = mean, median = median))) %>%
+      mutate(Jumlah_Anggota = as.integer(table(kmeans_model$cluster)))
+    
+    # Kembalikan hasil dalam sebuah list
+    list(
+      model = kmeans_model,
+      summary = summary_table
+    )
+  })
+  
+  # 3. Render Peta Hasil Clustering
+  output$cluster_map <- renderLeaflet({
+    
+    # Ambil hasil dari eventReactive
+    results <- cluster_results()
+    
+    # Tambahkan kolom klaster ke data spasial utama
+    data_to_map <- spatial_data %>%
+      mutate(cluster = as.factor(results$model$cluster))
+    
+    # Buat palet warna untuk klaster
+    pal <- colorFactor(palette = "viridis", domain = data_to_map$cluster)
+    
+    # Buat label popup
+    popup_content <- paste0(
+      "<strong>", data_to_map$WADMKK, "</strong><br>",
+      "Provinsi: ", data_to_map$WADMPR, "<br>",
+      "<strong>Klaster: ", data_to_map$cluster, "</strong>"
+    )
+    
+    # Buat peta
+    leaflet(data_to_map) %>%
+      addProviderTiles(providers$CartoDB.Positron) %>%
+      addPolygons(
+        fillColor = ~pal(cluster),
+        weight = 1, opacity = 1, color = "white", dashArray = "3", fillOpacity = 0.7,
+        label = lapply(popup_content, htmltools::HTML)
+      ) %>%
+      addLegend(pal = pal, values = ~cluster, opacity = 0.7, title = "Klaster", position = "bottomright")
+  })
+  
+  # 4. Render Tabel Ringkasan
+  output$cluster_summary_table <- DT::renderDataTable({
+    
+    # Ambil tabel ringkasan dari hasil
+    summary_tbl <- cluster_results()$summary
+    
+    DT::datatable(
+      summary_tbl,
+      options = list(scrollX = TRUE, pageLength = 5),
+      rownames = FALSE,
+      caption = "Rata-rata (mean) dan Median dari setiap variabel per klaster."
+    ) %>% DT::formatRound(columns = which(sapply(summary_tbl, is.numeric)), digits = 2)
+    
+  })
+  
+  
+  
+  # 5. Render Teks Interpretasi Dinamis (VERSI FINAL)
+  output$cluster_interpretation_text <- renderText({
+    cluster_interpretation_reactive()
+  })
+  
+  # LETAKKAN DUA BLOK INI DI DALAM FUNGSI server
+  
+  # Reactive untuk Teks Interpretasi Moran's I
+  moran_interpretation_reactive <- eventReactive(input$run_moran, {
+    result <- moran_calculation()
+    if (!is.null(result$error)) { return("") }
+    
+    p_val <- result$p.value
+    moran_I <- result$estimate[1]
+    
+    if (p_val < 0.05) {
+      if (moran_I > 0) {
+        paste("Hasilnya signifikan (p < 0.05). Nilai Moran's I positif (", round(moran_I, 4), ") menunjukkan adanya pola MENGELOMPOK (clustered). Wilayah dengan nilai serupa (tinggi-tinggi atau rendah-rendah) cenderung berdekatan.")
+      } else {
+        paste("Hasilnya signifikan (p < 0.05). Nilai Moran's I negatif (", round(moran_I, 4), ") menunjukkan adanya pola MENYEBAR (dispersed). Wilayah dengan nilai tinggi cenderung berdekatan dengan wilayah bernilai rendah.")
+      }
+    } else {
+      paste("Hasilnya tidak signifikan (p >= 0.05). Tidak ada cukup bukti adanya pola spasial. Distribusi nilai variabel di seluruh wilayah cenderung ACAK (random).")
+    }
+  })
+  
+  # Reactive untuk Teks Interpretasi Klaster
+  cluster_interpretation_reactive <- eventReactive(input$run_cluster, {
+    results <- cluster_results()
+    summary_tbl <- results$summary
+    
+    overall_stats <- sovi_data %>%
+      select(all_of(input$cluster_vars)) %>%
+      summarise(across(everything(), list(mean = mean, sd = sd), na.rm = TRUE))
+    
+    final_interpretation <- paste0(
+      "Analisis mengelompokkan ", nrow(spatial_data), " wilayah ke dalam ", input$cluster_k, 
+      " klaster dengan profil kerentanan yang unik:\n\n"
+    )
+    
+    for (i in 1:nrow(summary_tbl)) {
+      cluster_num <- summary_tbl$Klaster[i]
+      cluster_size <- summary_tbl$Jumlah_Anggota[i]
+      
+      z_scores <- c()
+      var_names <- c()
+      for (var in input$cluster_vars) {
+        clean_var_name <- sub("\\.x$|\\.y$", "", var)
+        cluster_mean <- summary_tbl[[paste0(var, "_mean")]][i]
+        overall_mean <- overall_stats[[paste0(var, "_mean")]]
+        overall_sd   <- overall_stats[[paste0(var, "_sd")]]
+        
+        z <- (cluster_mean - overall_mean) / overall_sd
+        z_scores <- c(z_scores, z)
+        var_names <- c(var_names, clean_var_name)
+      }
+      names(z_scores) <- var_names
+      
+      most_extreme_var_name <- names(which.max(abs(z_scores)))
+      most_extreme_z_value  <- z_scores[most_extreme_var_name]
+      archetype_level       <- if (most_extreme_z_value > 0.5) "Tinggi" else if (most_extreme_z_value < -0.5) "Rendah" else "Moderat"
+      archetype_title       <- if (archetype_level != "Moderat") {
+        paste0('"', most_extreme_var_name, ' ', archetype_level, '"')
+      } else {
+        '"Profil Moderat"'
+      }
+      
+      cluster_text <- paste0("🔹 **Klaster ", cluster_num, " - ", archetype_title, "** (", cluster_size, " anggota): ")
+      
+      sorted_z <- sort(z_scores, decreasing = TRUE)
+      top_var <- names(sorted_z)[1]
+      bottom_var <- names(sorted_z)[length(sorted_z)]
+      
+      description <- ""
+      if (archetype_level == "Moderat") {
+        description <- "Profilnya cenderung seimbang dan mendekati rata-rata keseluruhan pada semua variabel."
+      } else if (top_var == bottom_var) {
+        description <- paste0("Secara dominan ditandai oleh nilai **", top_var, "** yang ", tolower(archetype_level), ".")
+      } else {
+        description <- paste0("Ciri utamanya adalah nilai **", top_var, "** yang sangat tinggi, sementara nilai **", bottom_var, "** sangat rendah dibandingkan klaster lain.")
+      }
+      
+      final_interpretation <- paste0(final_interpretation, cluster_text, description, "\n\n")
+    }
+    return(final_interpretation)
+  })
+  
+  # =====================================================================
+  # [PENAMBAHAN SLM] --- ANALISIS SPATIAL LAG MODEL (SLM) - VERSI FINAL DENGAN MATRIKS JARAK
+  # =====================================================================
+  
+  slm_results <- eventReactive(input$run_slm, {
+    
+    validate(
+      need(!is.null(input$slm_y), "Pilih satu variabel dependen (Y)."),
+      need(length(input$slm_x) > 0, "Pilih minimal satu variabel independen (X)."),
+      need(!(input$slm_y %in% input$slm_x), "Variabel dependen tidak boleh sama dengan variabel independen.")
+    )
+    
+    formula_slm <- as.formula(paste(input$slm_y, "~", paste(input$slm_x, collapse = " + ")))
+    model_vars <- c(input$slm_y, input$slm_x)
+    
+    # --- PERBAIKAN UTAMA: KEMBALI MENGGUNAKAN MATRIKS JARAK DENGAN BENAR ---
+    
+    # 1. Dapatkan INDEKS NUMERIK dari baris-baris yang datanya lengkap (tanpa NA)
+    complete_cases_idx <- which(complete.cases(sovi_data[, model_vars]))
+    
+    validate(need(length(complete_cases_idx) > (length(model_vars) + 1), "Data tidak cukup setelah menghapus NA."))
+    
+    # 2. Filter data tabel menggunakan indeks
+    data_clean <- sovi_data[complete_cases_idx, ]
+    
+    # 3. Filter MATRIKS JARAK MENTAH (raw) menggunakan indeks yang sama untuk baris dan kolom
+    dist_matrix_clean <- dist_matrix_raw[complete_cases_idx, complete_cases_idx]
+    
+    # 4. Buat bobot dari matriks jarak yang sudah bersih MENGGUNAKAN FORMULA STABIL
+    #    Menggunakan (jarak + 1) untuk menghindari pembagian dengan nol
+    inv_dist_clean <- 1 / (dist_matrix_clean + 1)
+    diag(inv_dist_clean) <- 0
+    weights_clean <- mat2listw(inv_dist_clean, style = "W", zero.policy = TRUE)
+    # --- AKHIR DARI PERBAIKAN ---
+    
+    tryCatch({
+      model <- lagsarlm(formula = formula_slm, data = data_clean, listw = weights_clean, zero.policy = TRUE)
+      return(model)
+    }, error = function(e) {
+      # Memberikan pesan error yang lebih informatif jika terjadi
+      if (grepl("different dimensions", e$message)) {
+        return(paste("Gagal menjalankan model SLM: Dimensi data (", nrow(data_clean), " baris) tidak cocok dengan dimensi bobot spasial. Cek kembali proses filter data."))
+      } else {
+        return(paste("Gagal menjalankan model SLM:", e$message))
+      }
+    })
+  })
+  
+  # 2. Tampilkan ringkasan model di UI
+  output$slm_summary <- renderPrint({
+    result <- slm_results()
+    if (is.character(result)) { # Jika hasilnya adalah pesan error
+      cat(result)
+    } else { # Jika hasilnya adalah model
+      summary(result)
+    }
+  })
+  
+  # 3. Buat interpretasi dinamis
+  output$slm_interpretation <- renderText({
+    result <- slm_results()
+    validate(need(!is.character(result), "Interpretasi tidak tersedia karena model gagal dijalankan."))
+    
+    model_summary <- summary(result)
+    rho <- model_summary$rho
+    rho_pval <- model_summary$LR1$p.value # Ambil p-value dari Likelihood Ratio Test
+    
+    # Interpretasi Rho
+    rho_interp <- if (rho_pval < 0.05) {
+      if (rho > 0) {
+        paste0("Koefisien lag spasial (Rho) sebesar ", round(rho, 4), " signifikan secara statistik. Ini menunjukkan adanya efek limpahan (spillover) positif yang kuat. Artinya, nilai variabel '", input$slm_y, "' di suatu wilayah dipengaruhi secara positif oleh nilai di wilayah tetangganya.")
+      } else {
+        paste0("Koefisien lag spasial (Rho) sebesar ", round(rho, 4), " signifikan secara statistik. Ini menunjukkan adanya efek limpahan (spillover) negatif. Artinya, nilai variabel '", input$slm_y, "' di suatu wilayah cenderung berlawanan dengan nilai di wilayah tetangganya (misal, tinggi dikelilingi rendah).")
+      }
+    } else {
+      "Koefisien lag spasial (Rho) tidak signifikan. Ini menunjukkan bahwa efek ketergantungan spasial antar wilayah tidak cukup kuat untuk memengaruhi model setelah memperhitungkan variabel independen."
+    }
+    
+    # Interpretasi Variabel Signifikan
+    coef_table <- as.data.frame(model_summary$Coef)
+    significant_vars <- rownames(coef_table)[coef_table$`Pr(>|z|)` < 0.05]
+    significant_vars <- significant_vars[significant_vars != "(Intercept)"]
+    
+    vars_interp <- if (length(significant_vars) > 0) {
+      paste0("Variabel independen yang berpengaruh signifikan adalah: ", paste(significant_vars, collapse = ", "), ".")
+    } else {
+      "Tidak ada variabel independen yang berpengaruh signifikan dalam model ini."
+    }
+    
+    paste(rho_interp, vars_interp, sep = " \n")
+  })
+  
+  # 4. Fungsi download laporan SLM
+  output$download_slm_report <- downloadHandler(
+    filename = function() {
+      paste0("laporan_SLM_", input$slm_y, "_", Sys.Date(), ".docx")
+    },
+    content = function(file) {
+      result <- slm_results()
+      validate(need(!is.character(result), "Model gagal, laporan tidak dapat dibuat."))
+      
+      summary_output <- capture.output(summary(result))
+      interp_output <- output$slm_interpretation()
+      
+      doc <- read_docx() %>%
+        body_add_par("Laporan Spatial Lag Model (SLM)", style = "heading 1") %>%
+        body_add_par(paste("Tanggal Analisis:", Sys.Date())) %>%
+        body_add_par(paste("Variabel Dependen (Y):", input$slm_y)) %>%
+        body_add_par(paste("Variabel Independen (X):", paste(input$slm_x, collapse = ", "))) %>%
+        body_add_break() %>%
+        body_add_par("Ringkasan Hasil Model", style = "heading 2")
+      
+      for(line in summary_output) { doc <- doc %>% body_add_par(line, style = "Courier New") }
+      
+      doc <- doc %>%
+        body_add_break() %>%
+        body_add_par("Interpretasi Hasil", style = "heading 2") %>%
+        body_add_par(interp_output)
+      
+      print(doc, target = file)
+    }
+  )
+  
+  
+  
+  
+  
+  
   
   # =====================================================================
   # MORAN'S I - VERSI PERBAIKAN REAKTIVITAS FINAL
@@ -3791,28 +4321,164 @@ server <- function(input, output, session) {
   
   # 3. RENDER INTERPRETASI BERDASARKAN HASIL REAKTIF
   output$moran_interpretation <- renderText({
-    # Panggil hasil kalkulasi reaktif
-    result <- moran_calculation()
-    
-    # Jangan tampilkan apa-apa jika ada error
-    if (!is.null(result$error)) {
-      return("")
-    }
-    
-    # Buat interpretasi
-    p_val <- result$p.value
-    moran_I <- result$estimate[1]
-    
-    if (p_val < 0.05) {
-      if (moran_I > 0) {
-        paste("Hasilnya signifikan (p < 0.05). Nilai Moran's I positif (", round(moran_I, 4), ") menunjukkan adanya pola MENGELOMPOK (clustered). Wilayah dengan nilai serupa (tinggi-tinggi atau rendah-rendah) cenderung berdekatan.")
-      } else {
-        paste("Hasilnya signifikan (p < 0.05). Nilai Moran's I negatif (", round(moran_I, 4), ") menunjukkan adanya pola MENYEBAR (dispersed). Wilayah dengan nilai tinggi cenderung berdekatan dengan wilayah bernilai rendah (pola seperti papan catur).")
-      }
-    } else {
-      paste("Hasilnya tidak signifikan (p >= 0.05). Tidak ada cukup bukti adanya pola spasial. Distribusi nilai variabel di seluruh wilayah cenderung ACAK (random).")
-    }
+    moran_interpretation_reactive()
   })
+
+  
+  # =====================================================================
+  # DOWNLOAD HANDLERS UNTUK ANALISIS SPASIAL (VERSI OPTIMASI)
+  # =====================================================================
+  
+  # --- Download Laporan Moran's I (Word) ---
+  # (Kode ini tidak berat, jadi tidak perlu diubah, tapi disertakan agar lengkap)
+  output$download_moran_report <- downloadHandler(
+    filename = function() {
+      paste0("laporan_morans_i_", Sys.Date(), ".docx")
+    },
+    content = function(file) {
+      moran_output <- capture.output(moran_calculation())
+      moran_interp <- moran_interpretation_reactive()
+      
+      doc <- read_docx() %>%
+        body_add_par("Laporan Analisis Autokorelasi Spasial (Moran's I)", style = "heading 1") %>%
+        body_add_par(paste("Tanggal Analisis:", Sys.Date())) %>%
+        body_add_par("Hasil Uji Moran's I", style = "heading 2")
+      
+      for(line in moran_output) { doc <- doc %>% body_add_par(line) }
+      
+      doc <- doc %>%
+        body_add_par("Interpretasi", style = "heading 2") %>%
+        body_add_par(moran_interp)
+      
+      print(doc, target = file)
+    }
+  )
+  
+  cluster_map_object <- eventReactive(input$run_cluster, {
+    results <- cluster_results()
+    data_to_map <- spatial_data %>%
+      mutate(cluster = as.factor(results$model$cluster))
+    
+    pal <- colorFactor(palette = "viridis", domain = data_to_map$cluster)
+    
+    popup_content <- paste0(
+      "<strong>", data_to_map$WADMKK, "</strong><br>",
+      "Provinsi: ", data_to_map$WADMPR, "<br>",
+      "<strong>Klaster: ", data_to_map$cluster, "</strong>"
+    )
+    
+    leaflet(data_to_map) %>%
+      addProviderTiles(providers$CartoDB.Positron) %>%
+      addPolygons(
+        fillColor = ~pal(cluster),
+        weight = 1, opacity = 1, color = "white", dashArray = "3", fillOpacity = 0.7,
+        label = lapply(popup_content, htmltools::HTML)
+      ) %>%
+      addLegend(pal = pal, values = ~cluster, opacity = 0.7, title = "Klaster", position = "bottomright")
+  })
+  
+  
+  output$cluster_map <- renderLeaflet({ cluster_map_object() })
+  
+  
+  # --- Download Peta Klaster (PNG) dengan NOTIFIKASI LOADING ---
+  output$download_cluster_map_jpg <- downloadHandler(
+    filename = function() { paste0("peta_klaster_", Sys.Date(), ".png") },
+    content = function(file) {
+      req(cluster_map_object())
+      
+      # Tampilkan notifikasi "Loading"
+      withProgress(message = 'Membuat gambar peta...', value = 0.5, {
+        
+        # Gunakan mapshot dengan resolusi yang dioptimalkan
+        mapview::mapshot(
+          cluster_map_object(), 
+          file = file,
+          vwidth = 800, # Lebar gambar (lebih kecil, lebih cepat)
+          vheight = 600  # Tinggi gambar
+        )
+        
+        incProgress(0.5, detail = "Selesai!")
+      })
+    }
+  )
+  
+  # --- Download Laporan Klaster (Word) ---
+  # (Kode ini tidak berat, jadi tidak perlu diubah, tapi disertakan agar lengkap)
+  output$download_cluster_report <- downloadHandler(
+    filename = function() {
+      paste0("laporan_klaster_", Sys.Date(), ".docx")
+    },
+    content = function(file) {
+      summary_table <- cluster_results()$summary
+      cluster_interp <- cluster_interpretation_reactive()
+      
+      doc <- read_docx() %>%
+        body_add_par("Laporan Analisis Clustering (K-Means)", style = "heading 1") %>%
+        body_add_par(paste("Tanggal Analisis:", Sys.Date())) %>%
+        body_add_par("Ringkasan Karakteristik Klaster", style = "heading 2") %>%
+        body_add_table(summary_table, style = "Table Professional") %>%
+        body_add_par("Interpretasi", style = "heading 2") %>%
+        body_add_par(cluster_interp)
+      
+      print(doc, target = file)
+    }
+  )
+  
+  # --- Download Laporan GABUNGAN (Word) dengan NOTIFIKASI LOADING ---
+  output$download_spatial_full_report <- downloadHandler(
+    filename = function() {
+      paste0("laporan_lengkap_analisis_spasial_", Sys.Date(), ".docx")
+    },
+    content = function(file) {
+      
+      # Tampilkan notifikasi "Loading"
+      withProgress(message = 'Menyusun laporan lengkap...', value = 0, {
+        
+        incProgress(0.2, detail = "Mengambil data Moran's I...")
+        moran_output <- capture.output(moran_calculation())
+        moran_interp <- moran_interpretation_reactive()
+        
+        incProgress(0.2, detail = "Mengambil data klaster...")
+        summary_table <- cluster_results()$summary
+        cluster_interp <- cluster_interpretation_reactive()
+        
+        incProgress(0.2, detail = "Membuat gambar peta (proses berat)...")
+        temp_map_path <- tempfile(fileext = ".png")
+        mapview::mapshot(
+          cluster_map_object(), 
+          file = temp_map_path,
+          vwidth = 800, vheight = 600
+        )
+        
+        incProgress(0.2, detail = "Menyusun dokumen Word...")
+        doc <- read_docx() %>%
+          # ... (sisa kode untuk menyusun docx sama seperti sebelumnya)
+          body_add_par("Laporan Lengkap Analisis Spasial", style = "heading 1") %>%
+          body_add_par(paste("Tanggal Analisis:", Sys.Date())) %>%
+          body_add_par("1. Analisis Autokorelasi Spasial (Moran's I)", style = "heading 2") %>%
+          body_add_par("Hasil Uji:", style = "heading 3")
+        
+        for(line in moran_output) { doc <- doc %>% body_add_par(line) }
+        
+        doc <- doc %>%
+          body_add_par("Interpretasi:", style = "heading 3") %>%
+          body_add_par(moran_interp) %>%
+          body_add_break() %>%
+          
+          body_add_par("2. Analisis Clustering (K-Means)", style = "heading 2") %>%
+          body_add_par("Peta Sebaran Klaster:", style = "heading 3") %>%
+          body_add_img(src = temp_map_path, width = 6, height = 4.5) %>%
+          body_add_par("Ringkasan Karakteristik Klaster:", style = "heading 3") %>%
+          body_add_table(summary_table, style = "Table Professional") %>%
+          body_add_par("Interpretasi Klaster:", style = "heading 3") %>%
+          body_add_par(cluster_interp)
+        
+        incProgress(0.2, detail = "Menyimpan file...")
+        print(doc, target = file)
+      })
+    }
+  )
 }
 
 # ===============================================================================
@@ -3821,61 +4487,3 @@ server <- function(input, output, session) {
 
 # Jalankan aplikasi Shiny
 shinyApp(ui = ui, server = server)
-
-# ===============================================================================
-# CATATAN PENGGUNAAN:
-# ===============================================================================
-# 1. Pastikan semua library telah terinstal
-# 2. Siapkan file data:
-#    - sovi_data.csv: Data utama SOVI dengan struktur yang sesuai
-#    - distance.csv: Matriks jarak antar wilayah
-# 3. Letakkan file data dalam folder "data/" di direktori aplikasi
-# 4. Jalankan aplikasi dengan: shiny::runApp()
-# 
-# STRUKTUR FOLDER:
-# project_folder/
-# ├── app.R (file ini)
-# └── data/
-#     ├── sovi_data.csv
-#     └── distance.csv
-#
-# FITUR UTAMA YANG TELAH DIPERBAIKI:
-# - Integrasi matriks jarak untuk analisis spasial
-# - Penghapusan variabel artifisial yang tidak ada di data asli
-# - Interpretasi yang lebih spesifik dan dinamis
-# - Analisis klaster menggantikan peta yang tidak berfungsi
-# - Sistem manajemen variabel kategori yang dinamis
-# - Validasi data yang lebih baik
-# - Export laporan Word yang komprehensif
-# 
-# ANALISIS YANG TERSEDIA:
-# 1. Manajemen Data: Transformasi dan kategorisasi variabel
-# 2. Statistik Deskriptif: Ringkasan dan korelasi
-# 3. Visualisasi: Plot interaktif dengan interpretasi
-# 4. Analisis Spasial: Clustering dan Moran's I menggunakan matriks jarak
-# 5. Uji Asumsi: Normalitas dan homogenitas
-# 6. Uji Inferensia: T-test, ANOVA, uji ragam
-# 7. Regresi: Model linear berganda dengan diagnostik
-# 
-# KEUNGGULAN APLIKASI:
-# - Kompatibel dengan struktur data SOVI yang sebenarnya
-# - Menggunakan matriks jarak yang disediakan
-# - Interpretasi kontekstual untuk setiap analisis
-# - Interface yang user-friendly dengan tema modern
-# - Export otomatis ke format Word dan gambar
-# - Validasi input yang komprehensif
-# - Sistem peringatan untuk data dummy vs real
-# 
-# TROUBLESHOOTING:
-# - Jika data tidak ditemukan, aplikasi akan menggunakan data dummy
-# - Pastikan struktur data sesuai dengan metadata yang didefinisikan
-# - Untuk analisis spasial, pastikan matriks jarak tersedia
-# - Variabel kategori harus dibuat melalui menu Manajemen Data
-# 
-# PENGEMBANGAN LANJUTAN:
-# - Tambahkan metode clustering lainnya (DBSCAN, Gaussian Mixture)
-# - Implementasikan analisis spasial lanjutan (Local Moran's I, Geary's C)
-# - Tambahkan validasi data yang lebih komprehensif
-# - Integrasikan dengan database eksternal
-# - Tambahkan fitur machine learning untuk prediksi
-# ===============================================================================
